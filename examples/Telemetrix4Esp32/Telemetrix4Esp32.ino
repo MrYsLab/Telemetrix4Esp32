@@ -10,9 +10,10 @@
 #include <dhtnew.h>
 #include <ESP32Servo.h>
 #include <Ultrasonic.h>
+#include <ESP32AnalogRead.h>
 
-const char *ssid = "YOUR_SSID";
-const char *password = "YOUR_PASSWORD";
+const char *ssid = "A-Net";
+const char *password = "Sam2Curly";
 
 uint16_t PORT = 31336;
 
@@ -58,6 +59,12 @@ extern void set_analog_scanning_interval();
 
 extern void enable_all_reports();
 
+extern void analog_out_attach();
+
+extern void analog_out_detach();
+
+extern void dac_write();
+
 // This value must be the same as specified when instantiating the
 // telemetrix client. The client defaults to a value of 1.
 // This value is used for the client to auto-discover and to
@@ -86,6 +93,9 @@ extern void enable_all_reports();
 #define STOP_ALL_REPORTS 15
 #define SET_ANALOG_SCANNING_INTERVAL 16
 #define ENABLE_ALL_REPORTS 17
+#define ANALOG_OUT_ATTACH 18
+#define ANALOG_OUT_DETACH 19
+#define DAC_WRTE 20
 
 // When adding a new command update the command_table.
 // The command length is the number of bytes that follow
@@ -102,7 +112,10 @@ struct command_descriptor
 
 // If you add new commands, make sure to extend the siz of this
 // array.
-command_descriptor command_table[18] =
+
+// Make sure to keep things in the proper order - command
+// defines are indices into this table.
+command_descriptor command_table[21] =
     {
         {&serial_loopback},
         {&set_pin_mode},
@@ -121,7 +134,11 @@ command_descriptor command_table[18] =
         {dht_new},
         {stop_all_reports},
         {set_analog_scanning_interval},
-        {enable_all_reports}};
+        {enable_all_reports},
+        {analog_out_attach},
+        {analog_out_detach},
+        {&dac_write},
+};
 
 // Input pin reporting control sub commands (modify_reporting)
 #define REPORTING_DISABLE_ALL 0
@@ -135,19 +152,20 @@ command_descriptor command_table[18] =
 
 // Pin mode definitions
 
-// INPUT defined in Arduino.h = 0
-// OUTPUT defined in Arduino.h = 1
-// INPUT_PULLUP defined in Arduino.h = 2
 #define AT_INPUT 0
 #define AT_OUTPUT 1
 #define AT_INPUT_PULLUP 2
-// The following are defined for arduino_telemetrix (AT)
 #define AT_ANALOG 3
+#define AT_SERVO 4
+#define AT_SONAR 5
+#define AT_DHT 6
+#define AT_TOUCH 7
+#define AT_PWM_OUT 8
+
 #define AT_MODE_NOT_SET 255
 
 // maximum number of pins supported
-#define MAX_DIGITAL_PINS_SUPPORTED 100
-#define MAX_ANALOG_PINS_SUPPORTED 15
+#define MAX_PINS_SUPPORTED 40
 
 // Reports - sent from this sketch
 #define DIGITAL_REPORT DIGITAL_WRITE
@@ -160,6 +178,7 @@ command_descriptor command_table[18] =
 #define I2C_READ_REPORT 10
 #define SONAR_DISTANCE 11
 #define DHT_REPORT 12
+#define TOUCH_REPORT 13
 #define DEBUG_PRINT 99
 
 // DHT Report sub-types
@@ -189,7 +208,7 @@ struct pin_descriptor
 };
 
 // an array of digital_pin_descriptors
-pin_descriptor the_digital_pins[MAX_DIGITAL_PINS_SUPPORTED];
+pin_descriptor the_digital_pins[MAX_PINS_SUPPORTED];
 
 // a descriptor for digital pins
 struct analog_pin_descriptor
@@ -202,12 +221,27 @@ struct analog_pin_descriptor
                             // to generate a report
 };
 
-// an array of analog_pin_descriptors
-analog_pin_descriptor the_analog_pins[MAX_ANALOG_PINS_SUPPORTED];
-
-unsigned long current_millis;  // for analog input loop
-unsigned long previous_millis; // for analog input loop
+unsigned long current_millis;  // for touch input loop
+unsigned long previous_millis; // for touch input loop
 uint8_t analog_sampling_interval = 19;
+
+// an array of analog_pin_descriptors
+analog_pin_descriptor the_analog_pins[MAX_PINS_SUPPORTED];
+
+struct touch_pin_descriptor
+{
+    byte pin_number;
+    bool reporting_enabled;
+    int last_value;
+    int differential;
+};
+
+// an array of touch_pin descriptors
+touch_pin_descriptor the_touch_pins[MAX_PINS_SUPPORTED];
+
+unsigned long touch_current_millis;  // for touch input loop
+unsigned long touch_previous_millis; // for touch input loop
+uint8_t touch_sampling_interval = 19;
 
 // servo management
 Servo servos[MAX_SERVOS];
@@ -289,6 +323,10 @@ void set_pin_mode()
 {
     byte pin;
     byte mode;
+    byte resolution;
+    byte channel;
+    unsigned int fx;
+    double frequency;
     pin = command_buffer[0];
     mode = command_buffer[1];
 
@@ -304,6 +342,11 @@ void set_pin_mode()
         the_digital_pins[pin].reporting_enabled = command_buffer[2];
         pinMode(pin, INPUT_PULLUP);
         break;
+    case AT_TOUCH:
+        the_touch_pins[pin].differential = (command_buffer[2] << 8) + command_buffer[3];
+        the_touch_pins[pin].reporting_enabled = command_buffer[4];
+        break;
+
     case AT_OUTPUT:
         the_digital_pins[pin].pin_mode = mode;
         pinMode(pin, OUTPUT);
@@ -313,9 +356,34 @@ void set_pin_mode()
         the_analog_pins[pin].differential = (command_buffer[2] << 8) + command_buffer[3];
         the_analog_pins[pin].reporting_enabled = command_buffer[4];
         break;
+    case AT_PWM_OUT:
+        // command_buffer[2] = channel
+        // command_buffer[3] = resolution
+        // command_buffer[4] to commmand_buffer[11] = frequency
+
+        channel = command_buffer[2];
+        resolution = command_buffer[3];
+
+        memcpy(&frequency, &command_buffer[4], sizeof(double));
+        fx = (unsigned int)frequency;
+        ledcSetup(channel, frequency, resolution);
+        ledcAttachPin(pin, channel);
+        break;
     default:
         break;
     }
+}
+
+void analog_out_attach()
+{
+    // command_buffer[0] = pin number
+    // command_buffer[1] = channel
+    ledcAttachPin(command_buffer[0], command_buffer[1]);
+}
+
+void analog_out_detach()
+{
+    ledcDetachPin(command_buffer[0]);
 }
 
 void set_analog_scanning_interval()
@@ -334,15 +402,22 @@ void digital_write()
 
 void analog_write()
 {
-    // command_buffer[0] = PIN, command_buffer[1] = value_msb,
+    // command_buffer[0] = channel
+    // command_buffer[1] = value_msb,
     // command_buffer[2] = value_lsb
-    byte pin; // command_buffer[0]
+
     u_int value;
 
-    pin = command_buffer[0];
-
     value = (command_buffer[1] << 8) + command_buffer[2];
-    analogWrite(pin, value);
+    ledcWrite(command_buffer[0], value);
+}
+
+void dac_write()
+{
+    // command_buffer[0] = pin
+    // command_buffer[1] = value
+
+    dacWrite(command_buffer[0], command_buffer[1]);
 }
 
 void modify_reporting()
@@ -352,11 +427,11 @@ void modify_reporting()
     switch (command_buffer[0])
     {
     case REPORTING_DISABLE_ALL:
-        for (int i = 0; i < MAX_DIGITAL_PINS_SUPPORTED; i++)
+        for (int i = 0; i < MAX_PINS_SUPPORTED; i++)
         {
             the_digital_pins[i].reporting_enabled = false;
         }
-        for (int i = 0; i < MAX_ANALOG_PINS_SUPPORTED; i++)
+        for (int i = 0; i < MAX_PINS_SUPPORTED; i++)
         {
             the_analog_pins[i].reporting_enabled = false;
         }
@@ -700,7 +775,7 @@ void scan_digital_inputs()
     // byte 3 = value
     byte report_message[4] = {3, DIGITAL_REPORT, 0, 0};
 
-    for (int i = 0; i < MAX_DIGITAL_PINS_SUPPORTED; i++)
+    for (int i = 0; i < MAX_PINS_SUPPORTED; i++)
     {
         if (the_digital_pins[i].pin_mode == INPUT ||
             the_digital_pins[i].pin_mode == INPUT_PULLUP)
@@ -743,7 +818,7 @@ void scan_analog_inputs()
     {
         previous_millis += analog_sampling_interval;
 
-        for (int i = 0; i < MAX_ANALOG_PINS_SUPPORTED; i++)
+        for (int i = 0; i < MAX_PINS_SUPPORTED; i++)
         {
             if (the_analog_pins[i].pin_mode == AT_ANALOG)
             {
@@ -876,6 +951,51 @@ void scan_dhts()
     }
 }
 
+void scan_touch()
+{
+    int value;
+
+    // report message
+
+    // byte 0 = packet length
+    // byte 1 = report type
+    // byte 2 = pin number
+    // byte 3 = high order byte of value
+    // byte 4 = low order byte of value
+
+    byte report_message[5] = {4, TOUCH_REPORT, 0, 0, 0};
+
+    int differential;
+
+    touch_current_millis = millis();
+    if (touch_current_millis - touch_previous_millis > touch_sampling_interval)
+    {
+        touch_previous_millis += touch_sampling_interval;
+
+        for (int i = 0; i < MAX_PINS_SUPPORTED; i++)
+        {
+
+            if (the_touch_pins[i].reporting_enabled)
+            {
+                send_debug_info(22, i);
+                value = touchRead(the_touch_pins[i].pin_number);
+                differential = abs(value - the_touch_pins[i].last_value);
+                if (differential >= the_touch_pins[i].differential)
+                {
+                    //trigger value achieved, send out the report
+                    the_touch_pins[i].last_value = value;
+                    // input_message[1] = the_analog_pins[i].pin_number;
+                    report_message[2] = (byte)i;
+                    report_message[3] = highByte(value); // get high order byte
+                    report_message[4] = lowByte(value);
+                    client.write(report_message, 5);
+                    delay(1);
+                }
+            }
+        }
+    }
+}
+
 void setup()
 {
     Serial.begin(115200);
@@ -934,6 +1054,7 @@ void loop()
                         scan_analog_inputs();
                         scan_sonars();
                         scan_dhts();
+                        scan_touch();
                     }
                 }
             }
