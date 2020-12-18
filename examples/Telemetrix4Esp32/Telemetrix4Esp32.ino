@@ -65,6 +65,11 @@ extern void analog_out_detach();
 
 extern void dac_write();
 
+extern void reset_data();
+
+extern void init_pin_structures();
+
+
 // This value must be the same as specified when instantiating the
 // telemetrix client. The client defaults to a value of 1.
 // This value is used for the client to auto-discover and to
@@ -96,6 +101,7 @@ extern void dac_write();
 #define ANALOG_OUT_ATTACH 18
 #define ANALOG_OUT_DETACH 19
 #define DAC_WRTE 20
+#define RESET 21
 
 // When adding a new command update the command_table.
 // The command length is the number of bytes that follow
@@ -115,7 +121,7 @@ struct command_descriptor
 
 // Make sure to keep things in the proper order - command
 // defines are indices into this table.
-command_descriptor command_table[21] =
+command_descriptor command_table[23] =
     {
         {&serial_loopback},
         {&set_pin_mode},
@@ -138,6 +144,8 @@ command_descriptor command_table[21] =
         {analog_out_attach},
         {analog_out_detach},
         {&dac_write},
+        {&reset_data},
+        {&init_pin_structures}
 };
 
 // Input pin reporting control sub commands (modify_reporting)
@@ -810,7 +818,7 @@ void scan_analog_inputs()
 
     byte report_message[5] = {4, ANALOG_REPORT, 0, 0, 0};
 
-    uint8_t adjusted_pin_number;
+    //uint8_t adjusted_pin_number;
     int differential;
 
     current_millis = millis();
@@ -826,8 +834,8 @@ void scan_analog_inputs()
                 {
                     // if the value changed since last read
                     // adjust pin number for the actual read
-                    adjusted_pin_number = (uint8_t)(analog_read_pins[i]);
-                    value = analogRead(adjusted_pin_number);
+                    //adjusted_pin_number = (uint8_t)(analog_read_pins[i]);
+                    value = analogRead(i);
                     differential = abs(value - the_analog_pins[i].last_value);
                     if (differential >= the_analog_pins[i].differential)
                     {
@@ -977,8 +985,8 @@ void scan_touch()
 
             if (the_touch_pins[i].reporting_enabled)
             {
-                send_debug_info(22, i);
-                value = touchRead(the_touch_pins[i].pin_number);
+                value = touchRead(i);
+
                 differential = abs(value - the_touch_pins[i].last_value);
                 if (differential >= the_touch_pins[i].differential)
                 {
@@ -993,6 +1001,75 @@ void scan_touch()
                 }
             }
         }
+    }
+}
+
+void reset_data(){
+    // reset the data structures
+
+    // fist stop all reporting
+    stop_all_reports();
+
+    current_millis = 0;  // for analog input loop
+    previous_millis = 0; // for analog input loop
+    analog_sampling_interval = 19;
+
+    // detach any attached servos
+    for (int i = 0; i < MAX_SERVOS; i++)
+    {
+        if (servos[i].attached() == true)
+        {
+            servos[i].detach();
+        }
+    }
+
+    sonar_current_millis = 0;  // for analog input loop
+    sonar_previous_millis = 0; // for analog input loop
+    sonar_scan_interval = 33;  // Milliseconds between sensor pings
+
+    dht_index = 0; // index into dht struct
+
+    dht_current_millis = 0;      // for analog input loop
+    dht_previous_millis = 0;     // for analog input loop
+    dht_scan_interval = 2000;    // scan dht's every 2 seconds
+
+    touch_current_millis = 0;
+    touch_previous_millis = 0;
+
+    init_pin_structures();
+
+    memset(sonars, 0, sizeof(sonars));
+    memset(dhts, 0, sizeof(dhts));
+    enable_all_reports();
+}
+
+void init_pin_structures(){
+    for (byte i = 0; i < MAX_PINS_SUPPORTED; i++)
+    {
+        the_digital_pins[i].pin_number = i;
+        the_digital_pins[i].pin_mode = AT_MODE_NOT_SET;
+        the_digital_pins[i].reporting_enabled = false;
+        the_digital_pins[i].last_value = 0;
+
+        the_analog_pins[i].pin_number = i;
+        the_analog_pins[i].pin_mode = AT_MODE_NOT_SET;
+        the_analog_pins[i].reporting_enabled = false;
+        the_analog_pins[i].last_value = 0;
+        the_analog_pins[i].differential = 0;
+
+        the_touch_pins[i].reporting_enabled = false;
+        the_touch_pins[i].last_value = 0;
+        the_touch_pins[i].differential = 0;
+    }
+
+    // establish the analog pin array
+    for (byte i = 0; i < MAX_PINS_SUPPORTED; i++)
+    {
+        the_analog_pins[i].pin_number = i;
+        the_analog_pins[i].pin_mode = AT_MODE_NOT_SET;
+        the_analog_pins[i].reporting_enabled = false;
+        the_analog_pins[i].last_value = 0;
+        the_analog_pins[i].differential = 0;
     }
 }
 
@@ -1019,6 +1096,8 @@ void setup()
         Serial.print(".");
     }
 
+    Serial.println();
+
     Serial.print("Connected to WiFi. IP Address: ");
     Serial.print(WiFi.localIP());
 
@@ -1041,7 +1120,7 @@ void loop()
 
         while (client.connected())
         {
-            if (client.available())
+            // if (client.available())
             {
                 delay(1);
                 {
