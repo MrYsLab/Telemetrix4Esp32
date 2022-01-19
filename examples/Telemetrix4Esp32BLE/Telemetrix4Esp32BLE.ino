@@ -346,12 +346,6 @@ command_descriptor command_table[] =
 #define STEPPER_RUN_COMPLETE_REPORT 19
 #define DEBUG_PRINT 99
 
-STEPPER_DISTANCE_TO_GO = 16
-    STEPPER_TARGET_POSITION = 17
-    STEPPER_CURRENT_POSITION = 18
-    STEPPER_RUNNING_REPORT = 19
-    STEPPER_RUN_COMPLETE_REPORT = 20
-
 // DHT Report sub-types
 #define DHT_DATA 0
 #define DHT_READ_ERROR 1
@@ -1160,8 +1154,6 @@ void set_pin_mode_stepper() {
 }
 
 void stepper_move_to() {
-  //#if !defined (__AVR_ATmega328P__)
-
   // motor_id = command_buffer[0]
   // position MSB = command_buffer[1]
   // position MSB-1 = command_buffer[2]
@@ -1174,8 +1166,8 @@ void stepper_move_to() {
   position += (long)(command_buffer[2]) << 16;
   position += command_buffer[3] << 8;
   position += command_buffer[4] ;
-  if(command_buffer[5]){
-  position *= -1;
+  if (command_buffer[5]) {
+    position *= -1;
   }
 
 
@@ -1183,7 +1175,6 @@ void stepper_move_to() {
 }
 
 void stepper_move() {
-  //#if !defined (__AVR_ATmega328P__)
 
   // motor_id = command_buffer[0]
   // position MSB = command_buffer[1]
@@ -1197,8 +1188,9 @@ void stepper_move() {
   position += (long)(command_buffer[2]) << 16;
   position += command_buffer[3] << 8;
   position += command_buffer[4] ;
-  if(command_buffer[5]){
-  position *= -1
+  if (command_buffer[5]) {
+    position *= -1;
+  }
   devices.steppers[command_buffer[0]]->move(position);
 }
 

@@ -1100,13 +1100,16 @@ void stepper_move_to() {
   // position MSB-1 = command_buffer[2]
   // position MSB-2 = command_buffer[3]
   // position LSB = command_buffer[4]
+  // polarity = command_buffer[5]
 
   // convert the 4 position bytes to a long
   long position = (long)(command_buffer[1]) << 24;
   position += (long)(command_buffer[2]) << 16;
   position += command_buffer[3] << 8;
   position += command_buffer[4] ;
-
+  if (command_buffer[5]) {
+    position *= -1;
+  }
   devices.steppers[command_buffer[0]]->moveTo(position);
 }
 
@@ -1116,6 +1119,7 @@ void stepper_move() {
   // position MSB-1 = command_buffer[2]
   // position MSB-2 = command_buffer[3]
   // position LSB = command_buffer[4]
+  // polarity = command_buffer[5]
 
   // convert the 4 position bytes to a long
   long position = (long)(command_buffer[1]) << 24;
@@ -1123,6 +1127,9 @@ void stepper_move() {
   position += command_buffer[3] << 8;
   position += command_buffer[4] ;
 
+  if (command_buffer[5]) {
+    position *= -1;
+  }
   devices.steppers[command_buffer[0]]->move(position);
 }
 
