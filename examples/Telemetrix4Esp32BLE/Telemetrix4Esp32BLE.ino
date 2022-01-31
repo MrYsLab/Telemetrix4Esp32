@@ -1500,6 +1500,7 @@ void scan_sonars()
       {
         sonar_previous_millis += sonar_scan_interval;
         distance = devices.sonars[devices.last_sonar_visited].usonic->read();
+        delay(10);
         if (distance != devices.sonars[devices.last_sonar_visited].last_value)
         {
           devices.sonars[devices.last_sonar_visited].last_value = distance;
