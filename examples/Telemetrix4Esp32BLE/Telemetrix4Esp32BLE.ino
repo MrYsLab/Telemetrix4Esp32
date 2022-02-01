@@ -1116,14 +1116,13 @@ void onewire_reset_search() {
 
 // Send a OneWire search command
 void onewire_search() {
-
   uint8_t onewire_report_message[] = {10, ONE_WIRE_REPORT, ONE_WIRE_SEARCH,
                                       0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
                                       0xff
                                      };
-  bool found;
 
-  ow->search(&onewire_report_message[3], found);
+  ow->search(&onewire_report_message[3]);
+
   pTxCharacteristic->setValue(onewire_report_message, 11);
   pTxCharacteristic->notify();
 }
@@ -1500,7 +1499,6 @@ void scan_sonars()
       {
         sonar_previous_millis += sonar_scan_interval;
         distance = devices.sonars[devices.last_sonar_visited].usonic->read();
-        delay(10);
         if (distance != devices.sonars[devices.last_sonar_visited].last_value)
         {
           devices.sonars[devices.last_sonar_visited].last_value = distance;
