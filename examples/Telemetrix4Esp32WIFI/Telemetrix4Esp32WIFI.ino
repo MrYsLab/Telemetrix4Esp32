@@ -574,6 +574,10 @@ void set_pin_mode()
       the_digital_pins[pin].reporting_enabled = command_buffer[2];
       pinMode(pin, INPUT_PULLUP);
       break;
+    case AT_INPUT_PULLDOWN:
+      the_digital_pins[pin].pin_mode = mode;
+      the_digital_pins[pin].reporting_enabled = command_buffer[2];
+      pinMode(pin, INPUT_PULLDOWN);
     case AT_TOUCH:
       the_touch_pins[pin].differential = (command_buffer[2] << 8) + command_buffer[3];
       the_touch_pins[pin].reporting_enabled = command_buffer[4];
@@ -1391,13 +1395,14 @@ void scan_digital_inputs()
 
   for (int i = 0; i < MAX_PINS_SUPPORTED; i++)
   {
-    if (the_digital_pins[i].pin_mode == INPUT ||
-        the_digital_pins[i].pin_mode == INPUT_PULLUP)
+    if (the_digital_pins[i].pin_mode == AT_INPUT ||
+        the_digital_pins[i].pin_mode == AT_INPUT_PULLUP ||
+        the_digital_pins[i].pin_mode == AT_INPUT_PULLDOWN)
     {
       if (the_digital_pins[i].reporting_enabled)
       {
         // if the value changed since last read
-        value = (byte)digitalRead(the_digital_pins[i].pin_number);
+        value = (byte)digitalRead(i);
         if (value != the_digital_pins[i].last_value)
         {
           the_digital_pins[i].last_value = value;
@@ -1721,6 +1726,7 @@ void setup()
   Serial.println();
 
   digitalWrite(LED_BUILTIN, LOW);
+  init_pin_structures();
   can_scan = true;
   wifiServer.begin();
 }
