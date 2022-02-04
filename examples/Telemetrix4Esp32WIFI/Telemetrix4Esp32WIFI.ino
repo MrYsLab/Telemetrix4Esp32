@@ -799,11 +799,7 @@ void servo_detach()
 
 void i2c_begin()
 {
-  byte i2c_port = command_buffer[0];
-  if (not i2c_port)
-  {
-    Wire.begin();
-  }
+  Wire.begin();
 }
 
 void i2c_read()
@@ -813,7 +809,6 @@ void i2c_read()
   // register, [1]
   // number of bytes, [2]
   // stop transmitting flag [3]
-  // i2c port [4]
 
   int message_size = 0;
   byte address = command_buffer[0];
@@ -839,33 +834,30 @@ void i2c_read()
   }
 
   // packet length
-  i2c_report_message[0] = command_buffer[2] + 5;
+  i2c_report_message[0] = command_buffer[2] + 4;
 
   // report type
   i2c_report_message[1] = I2C_READ_REPORT;
 
-  // i2c_port
-  i2c_report_message[2] = command_buffer[4];
-
   // number of bytes read
-  i2c_report_message[3] = command_buffer[2]; // number of bytes
+  i2c_report_message[2] = command_buffer[2]; // number of bytes
 
   // device address
-  i2c_report_message[4] = address;
+  i2c_report_message[3] = address;
 
   // device register
-  i2c_report_message[5] = the_register;
+  i2c_report_message[4] = the_register;
 
   // append the data that was read
   for (message_size = 0; message_size < command_buffer[2] && Wire.available(); message_size++)
   {
-    i2c_report_message[6 + message_size] = Wire.read();
+    i2c_report_message[5 + message_size] = Wire.read();
   }
   // send slave address, register and received bytes
 
-  for (int i = 0; i < message_size + 6; i++)
+  for (int i = 0; i < message_size + 5; i++)
   {
-    client.write(i2c_report_message[i]);
+    client.write(i2c_report_message, message_size + 5);
   }
 }
 
@@ -873,7 +865,6 @@ void i2c_write()
 {
   // command_buffer[0] is the number of bytes to send
   // command_buffer[1] is the device address
-  // command_buffer[2] is the i2c port
   // additional bytes to write= command_buffer[3..];
 
   Wire.beginTransmission(command_buffer[1]);
@@ -881,7 +872,7 @@ void i2c_write()
   // write the data to the device
   for (int i = 0; i < command_buffer[0]; i++)
   {
-    Wire.write(command_buffer[i + 3]);
+    Wire.write(command_buffer[i + 2]);
   }
   Wire.endTransmission();
   delayMicroseconds(70);
