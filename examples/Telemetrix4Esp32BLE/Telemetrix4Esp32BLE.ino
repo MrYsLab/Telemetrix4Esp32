@@ -898,22 +898,22 @@ void i2c_read()
   i2c_report_message[1] = I2C_READ_REPORT;
 
   // number of bytes read
-  i2c_report_message[3] = command_buffer[2]; // number of bytes
+  i2c_report_message[2] = command_buffer[2]; // number of bytes
 
   // device address
-  i2c_report_message[4] = address;
+  i2c_report_message[3] = address;
 
   // device register
-  i2c_report_message[5] = the_register;
+  i2c_report_message[4] = the_register;
 
   // append the data that was read
   for (message_size = 0; message_size < command_buffer[2] && Wire.available(); message_size++)
   {
-    i2c_report_message[6 + message_size] = Wire.read();
+    i2c_report_message[5 + message_size] = Wire.read();
   }
   // send slave address, register and received bytes
 
-  for (int i = 0; i < message_size + 6; i++)
+  for (int i = 0; i < message_size + 5; i++)
   {
     pTxCharacteristic->setValue(i2c_report_message, message_size + 5);
     pTxCharacteristic->notify();
