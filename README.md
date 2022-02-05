@@ -1,7 +1,11 @@
 # Telemetrix4Esp32
 
-# UNDER CONSTRUCTION
+This repository contains both WI-FI and BLE servers that permit you to monitor
+and control an ESP32 device using standard Python 3 scripts running on a PC.
 
-The Telemetrix Project WiFi and BLE Server For ESP32 Arduino-Core Devices. For 
-instructions on use, 
-see the [Telemetrix User's Guide.](https://mryslab.github.io/telemetrix/)
+Because the servers were written using the Arduino ESP32 Core library, installation is 
+managed via the Arduino IDE and Library Manager.
+
+A [User's Guide](https://mryslab.github.io/telemetrix-esp32/) explaining installation 
+and use is available online.
+
