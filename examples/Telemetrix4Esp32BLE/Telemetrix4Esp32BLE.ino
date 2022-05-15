@@ -1459,7 +1459,7 @@ void scan_analog_inputs()
   current_millis = millis();
   if (current_millis - previous_millis > analog_sampling_interval)
   {
-    previous_millis += analog_sampling_interval;
+    previous_millis current_millis ;
 
     for (int i = 0; i < MAX_PINS_SUPPORTED; i++)
     {
@@ -1497,7 +1497,7 @@ void scan_sonars()
       sonar_current_millis = millis();
       if (sonar_current_millis - sonar_previous_millis > sonar_scan_interval)
       {
-        sonar_previous_millis += sonar_scan_interval;
+        sonar_previous_millis = sonar_current_millis;
         distance = devices.sonars[devices.last_sonar_visited].usonic->read();
         if (distance != devices.sonars[devices.last_sonar_visited].last_value)
         {
@@ -1559,7 +1559,7 @@ void scan_dhts()
     if (dht_current_millis - dht_previous_millis > dht_scan_interval)
     {
       // update for the next scan
-      dht_previous_millis += dht_scan_interval;
+      dht_previous_millis = dht_current_millis;
 
       // read and report all the dht sensors
       for (int i = 0; i < devices.dht_index; i++)
@@ -1614,7 +1614,7 @@ void scan_touch()
   touch_current_millis = millis();
   if (touch_current_millis - touch_previous_millis > touch_sampling_interval)
   {
-    touch_previous_millis += touch_sampling_interval;
+    touch_previous_millis =  touch_current_millis;
 
     for (int i = 0; i < MAX_PINS_SUPPORTED; i++)
     {
