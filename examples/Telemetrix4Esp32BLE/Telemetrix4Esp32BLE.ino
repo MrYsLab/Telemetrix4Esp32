@@ -1459,7 +1459,7 @@ void scan_analog_inputs()
   current_millis = millis();
   if (current_millis - previous_millis > analog_sampling_interval)
   {
-    previous_millis current_millis ;
+    previous_millis = current_millis ;
 
     for (int i = 0; i < MAX_PINS_SUPPORTED; i++)
     {
