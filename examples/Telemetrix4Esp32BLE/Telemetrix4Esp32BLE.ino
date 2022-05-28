@@ -1459,7 +1459,7 @@ void scan_analog_inputs()
   current_millis = millis();
   if (current_millis - previous_millis > analog_sampling_interval)
   {
-    previous_millis = current_millis ;
+    previous_millis = current_millis;
 
     for (int i = 0; i < MAX_PINS_SUPPORTED; i++)
     {
@@ -1614,7 +1614,7 @@ void scan_touch()
   touch_current_millis = millis();
   if (touch_current_millis - touch_previous_millis > touch_sampling_interval)
   {
-    touch_previous_millis =  touch_current_millis;
+    touch_previous_millis = touch_current_millis;
 
     for (int i = 0; i < MAX_PINS_SUPPORTED; i++)
     {
