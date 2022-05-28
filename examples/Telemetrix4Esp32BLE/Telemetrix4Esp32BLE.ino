@@ -355,6 +355,7 @@ command_descriptor command_table[] =
 #define FIRMWARE_MINOR 0
 #define FIRMWARE_BUILD 0
 
+
 // A buffer to hold i2c report data
 byte i2c_report_message[64];
 
