@@ -1,6 +1,6 @@
 /*
 
-  Copyright (c) 2022 Alan Yorinks All rights reserved.
+  Copyright (c) 2023 Alan Yorinks All rights reserved.
 
   This program is free software; you can redistribute it and/or
   modify it under the terms of the GNU AFFERO GENERAL PUBLIC LICENSE
@@ -18,7 +18,7 @@
 */
 
 /*
-  This sketch is a telemetrix server for the esp32 WIFI interface
+  This sketch is a telemetrix server for the esp32 BLE interface
 */
 
 #include <Arduino.h>
@@ -33,12 +33,25 @@
 #include <AccelStepper.h>
 
 /* WIFI specific defines */
-const char *ssid = "YOUR_NETWORK_SSID";
-const char *password = "YOUR_NETWORK_PASSWORD";
+// const char *ssid = "YOUR_NETWORK_SSID";
+// const char *password = "YOUR_NETWORK_PASSWORD";
+const char *ssid = "A-Net";
+const char *password = "Sam2Curly";
 
 uint16_t PORT = 31336;
 
 WiFiServer wifiServer(PORT);
+
+WiFiClient client;
+
+#if CONFIG_FREERTOS_UNICORE
+static const BaseType_t app_cpu = 0;
+#else
+static const BaseType_t app_cpu = 1;
+#endif
+
+static TimerHandle_t wifi_connection_timer = NULL;
+#define CONNECTION_TIMEOUT_PERIOD 10000 // 10 seconds
 
 // We define the following functions as extern
 // to provide for forward referencing.
@@ -164,7 +177,13 @@ extern void stepper_set_enable_pin();
 
 extern void stepper_is_running();
 
-extern void send_debug_info(byte id, int value);
+extern void send_debug_info(uint8_t id, int value);
+
+extern void rtos_fatal_error_report(char *report);
+
+extern void get_next_command();
+
+extern void send_report();
 
 // Commands -received by this sketch
 // Add commands retaining the sequential numbering.
@@ -227,6 +246,16 @@ extern void send_debug_info(byte id, int value);
 #define STEPPER_GET_DISTANCE_TO_GO 55
 #define STEPPER_GET_TARGET_POSITION 56
 
+// FreeRTOS elements
+// Data coming in from the transport is placed on this queue.
+QueueHandle_t command_q;
+
+// Report queue
+QueueHandle_t report_q;
+
+// task handle
+TaskHandle_t xHandle;
+
 // When adding a new command update the command_table.
 // The command length is the number of bytes that follow
 // the command byte itself, and does not include the command
@@ -243,64 +272,64 @@ struct command_descriptor
 // Make sure to keep things in the proper order - command
 // defines are indices into this table.
 command_descriptor command_table[] =
-{
-  {&serial_loopback},
-  {&set_pin_mode},
-  {&digital_write},
-  {&analog_write},
-  {&modify_reporting},
-  {&get_firmware_version},
-  {&servo_attach},
-  {&servo_write},
-  {&servo_detach},
-  {&i2c_begin},
-  {&i2c_read},
-  {&i2c_write},
-  {&sonar_new},
-  {&dht_new},
-  {&stop_all_reports},
-  {&set_analog_scanning_interval},
-  {&enable_all_reports},
-  {&analog_out_attach},
-  {&analog_out_detach},
-  {&dac_write},
-  {&reset_data},
-  {&dac_disable},
-  {&init_spi},
-  {&write_blocking_spi},
-  {&read_blocking_spi},
-  {&set_format_spi},
-  {&spi_cs_control},
-  {&onewire_init},
-  {&onewire_reset},
-  {&onewire_select},
-  {&onewire_skip},
-  {&onewire_write},
-  {&onewire_read},
-  {&onewire_reset_search},
-  {&onewire_search},
-  {&onewire_crc8},
-  {&set_pin_mode_stepper},
-  {&stepper_move_to},
-  {&stepper_move},
-  {&stepper_run},
-  {&stepper_run_speed},
-  {&stepper_set_max_speed},
-  {&stepper_set_acceleration},
-  {&stepper_set_speed},
-  (&stepper_set_current_position),
-  (&stepper_run_speed_to_position),
-  (&stepper_stop),
-  (&stepper_disable_outputs),
-  (&stepper_enable_outputs),
-  (&stepper_set_minimum_pulse_width),
-  (&stepper_set_enable_pin),
-  (&stepper_set_3_pins_inverted),
-  (&stepper_set_4_pins_inverted),
-  (&stepper_is_running),
-  (&stepper_get_current_position),
-  {&stepper_get_distance_to_go},
-  (&stepper_get_target_position),
+    {
+        {&serial_loopback},
+        {&set_pin_mode},
+        {&digital_write},
+        {&analog_write},
+        {&modify_reporting},
+        {&get_firmware_version},
+        {&servo_attach},
+        {&servo_write},
+        {&servo_detach},
+        {&i2c_begin},
+        {&i2c_read},
+        {&i2c_write},
+        {&sonar_new},
+        {&dht_new},
+        {&stop_all_reports},
+        {&set_analog_scanning_interval},
+        {&enable_all_reports},
+        {&analog_out_attach},
+        {&analog_out_detach},
+        {&dac_write},
+        {&reset_data},
+        {&dac_disable},
+        {&init_spi},
+        {&write_blocking_spi},
+        {&read_blocking_spi},
+        {&set_format_spi},
+        {&spi_cs_control},
+        {&onewire_init},
+        {&onewire_reset},
+        {&onewire_select},
+        {&onewire_skip},
+        {&onewire_write},
+        {&onewire_read},
+        {&onewire_reset_search},
+        {&onewire_search},
+        {&onewire_crc8},
+        {&set_pin_mode_stepper},
+        {&stepper_move_to},
+        {&stepper_move},
+        {&stepper_run},
+        {&stepper_run_speed},
+        {&stepper_set_max_speed},
+        {&stepper_set_acceleration},
+        {&stepper_set_speed},
+        (&stepper_set_current_position),
+        (&stepper_run_speed_to_position),
+        (&stepper_stop),
+        (&stepper_disable_outputs),
+        (&stepper_enable_outputs),
+        (&stepper_set_minimum_pulse_width),
+        (&stepper_set_enable_pin),
+        (&stepper_set_3_pins_inverted),
+        (&stepper_set_4_pins_inverted),
+        (&stepper_is_running),
+        (&stepper_get_current_position),
+        {&stepper_get_distance_to_go},
+        (&stepper_get_target_position),
 };
 
 // Input pin reporting control sub commands (modify_reporting)
@@ -311,7 +340,9 @@ command_descriptor command_table[] =
 #define REPORTING_DIGITAL_DISABLE 4
 
 // maximum length of a command in bytes
-#define MAX_COMMAND_LENGTH 30
+#define MAX_COMMAND_LENGTH 32
+
+#define MAX_REPORT_LENGTH 64
 
 // Pin mode definitions
 
@@ -325,7 +356,6 @@ command_descriptor command_table[] =
 #define AT_TOUCH 7
 #define AT_PWM_OUT 8
 #define AT_INPUT_PULLDOWN 9
-
 
 #define AT_MODE_NOT_SET 255
 
@@ -357,25 +387,29 @@ command_descriptor command_table[] =
 #define DHT_READ_ERROR 1
 
 // firmware version - update this when bumping the version
-#define FIRMWARE_MAJOR 2
+#define FIRMWARE_MAJOR 1
 #define FIRMWARE_MINOR 0
-#define FIRMWARE_BUILD 0
+#define FIRMWARE_BUILD 2
 
+// Scanning intervals
 
-// A buffer to hold i2c report data
-byte i2c_report_message[64];
+// analog scanning time management
+uint8_t analog_sampling_interval = 19;
+// touch pin scanning time management
+uint8_t touch_sampling_interval = 19;
+// sonar scanning time management
+uint8_t sonar_scan_interval = 33; // Milliseconds between sensor pings
+// dht scanning time management
+unsigned int dht_scan_interval = 2200; // scan dht's every 2.2 seconds
 
-bool stop_reports = false; // a flag to stop sending all report messages
-
-// A buffer to hold spi report data
-byte spi_report_message[64];
-
+// a flag to stop sending all report messages
+bool stop_reports = false;
 
 // a descriptor for digital pins
 struct pin_descriptor
 {
-  byte pin_number;
-  byte pin_mode;
+  uint8_t pin_number;
+  uint8_t pin_mode;
   bool reporting_enabled; // If true, then send reports if an input pin
   int last_value;         // Last value read for input mode
 };
@@ -386,24 +420,20 @@ pin_descriptor the_digital_pins[MAX_PINS_SUPPORTED];
 // a descriptor for digital pins
 struct analog_pin_descriptor
 {
-  byte pin_number;
-  byte pin_mode;
+  uint8_t pin_number;
+  uint8_t pin_mode;
   bool reporting_enabled; // If true, then send reports if an input pin
   int last_value;         // Last value read for input mode
   int differential;       // difference between current and last value needed
-  // to generate a report
+                          // to generate a report
 };
-
-unsigned long current_millis;  // for analog input scan loop
-unsigned long previous_millis; // for analog input scan loop
-uint8_t analog_sampling_interval = 19;
 
 // an array of analog_pin_descriptors
 analog_pin_descriptor the_analog_pins[MAX_PINS_SUPPORTED];
 
 struct touch_pin_descriptor
 {
-  byte pin_number;
+  uint8_t pin_number;
   bool reporting_enabled;
   int last_value;
   int differential;
@@ -412,16 +442,12 @@ struct touch_pin_descriptor
 // an array of touch_pin descriptors
 touch_pin_descriptor the_touch_pins[MAX_PINS_SUPPORTED];
 
-unsigned long touch_current_millis;  // for touch input loop
-unsigned long touch_previous_millis; // for touch input loop
-uint8_t touch_sampling_interval = 19;
-
 // servo management
 Servo servos[MAX_SERVOS];
 
 // this array allows us to retrieve the servo object
 // associated with a specific pin number
-byte pin_to_servo_index_map[MAX_SERVOS];
+uint8_t pin_to_servo_index_map[MAX_SERVOS];
 
 // HC-SR04 Sonar Management
 #define MAX_SONARS 6
@@ -432,19 +458,6 @@ struct Sonar
   unsigned int last_value;
   Ultrasonic *usonic;
 };
-
-// an array of sonar objects
-Sonar sonars[MAX_SONARS];
-
-byte sonars_index = 0; // index into sonars struct
-
-// used for scanning the sonar devices.
-byte last_sonar_visited = 0;
-
-unsigned long sonar_current_millis;  // for analog input loop
-unsigned long sonar_previous_millis; // for analog input loop
-uint8_t sonar_scan_interval = 33;    // Milliseconds between sensor pings
-// (29ms is about the min to avoid = 19;
 
 // DHT Management
 #define MAX_DHTS 6                // max number of devices
@@ -458,19 +471,13 @@ struct DHT
   DHTNEW *dht_sensor;
 };
 
-// an array of dht objects]
-DHT dhts[MAX_DHTS];
+// buffer to hold incoming command data from the BLE interface
+QueueHandle_t command_q_buffer[MAX_COMMAND_LENGTH];
 
-byte dht_index = 0; // index into dht struct
+// buffer to hold data pulled off of the command queue
+uint8_t command_buffer[MAX_COMMAND_LENGTH];
 
-unsigned long dht_current_millis;      // for analog input loop
-unsigned long dht_previous_millis;     // for analog input loop
-unsigned int dht_scan_interval = 2000; // scan dht's every 2 seconds
-
-// buffer to hold incoming command data
-
-// buffer to hold incoming command data
-byte command_buffer[MAX_COMMAND_LENGTH];
+/* OneWire Object*/
 
 // a pointer to a OneWire object
 OneWire *ow = NULL;
@@ -479,49 +486,56 @@ OneWire *ow = NULL;
 
 // A class to store device objects
 
-class Devices {
-  public:
-    AccelStepper *steppers[MAX_NUMBER_OF_STEPPERS];
-    uint8_t stepper_run_modes[MAX_NUMBER_OF_STEPPERS];
-    bool ok_to_run_motors = false;
-    DHT dhts[MAX_DHTS];
-    Sonar sonars[MAX_SONARS];
+class Devices
+{
+public:
+  // stepper device storage and management
+  AccelStepper *steppers[MAX_NUMBER_OF_STEPPERS];
+  uint8_t stepper_run_modes[MAX_NUMBER_OF_STEPPERS];
+  bool ok_to_run_motors = false;
 
-    int steppers_index = 0;
-    byte dht_index = 0; // index into dht struct
-    byte sonars_index = 0; // index into sonars struct
-    byte last_sonar_visited = 0;
-    AccelStepper *z;
+  // DHT device storage
+  DHT dhts[MAX_DHTS];
 
+  // sonar device storage
+  Sonar sonars[MAX_SONARS];
 
-    void add_a_stepper(int interface, uint8_t pin1, uint8_t pin2,
-                       uint8_t pin3, uint8_t pin4, bool enable) {
+  // stepper variables
+  int steppers_index = 0;
 
+  // dht variables
+  uint8_t dht_index = 0; // index into dht struct
 
-      if (this->steppers_index < MAX_NUMBER_OF_STEPPERS) {
-        this->steppers[this->steppers_index] = new AccelStepper(interface,
-            pin1, pin2, pin3, pin4, enable);
-        this->steppers_index++;
+  // sonar variables
+  uint8_t sonars_index = 0; // index into sonars struct
+  uint8_t last_sonar_visited = 0;
 
+  // methods to devices
+  void add_a_stepper(int interface, uint8_t pin1, uint8_t pin2,
+                     uint8_t pin3, uint8_t pin4, bool enable)
+  {
 
-
-        //this->steppers[this->steppers_index]->setMaxSpeed(1000);
-        //this->steppers[this->steppers_index]->setSpeed(50);
-
-
-      }
+    if (this->steppers_index < MAX_NUMBER_OF_STEPPERS)
+    {
+      this->steppers[this->steppers_index] = new AccelStepper(interface,
+                                                              pin1, pin2, pin3, pin4, enable);
+      this->steppers_index++;
     }
+  }
 
-    void add_a_dht(uint8_t pin) {
-      this->dhts[this->dht_index].dht_sensor = new DHTNEW(pin);
-      this->dhts[this->dht_index].pin = pin;
-    }
+  void add_a_dht(uint8_t pin)
+  {
+    this->dhts[this->dht_index].dht_sensor = new DHTNEW(pin);
+    this->dhts[this->dht_index].pin = pin;
 
-    void add_sonar(uint8_t trigger_pin, uint8_t echo_pin) {
-      this->sonars[this->sonars_index].usonic = new Ultrasonic(trigger_pin, echo_pin, 80000UL);
-      this->sonars[this->sonars_index].trigger_pin = trigger_pin;
-      this->sonars_index++;
-    }
+  }
+
+  void add_sonar(uint8_t trigger_pin, uint8_t echo_pin)
+  {
+    this->sonars[this->sonars_index].usonic = new Ultrasonic(trigger_pin, echo_pin, 80000UL);
+    this->sonars[this->sonars_index].trigger_pin = trigger_pin;
+    this->sonars_index++;
+  }
 };
 
 // Instantiate the devices class
@@ -530,83 +544,118 @@ Devices devices = Devices();
 // allow input scanning and motor running
 bool can_scan = false;
 
+// ip connection status
+bool deviceConnected = false;
 
-// wifi client connection
-WiFiClient client;
+// this is a diagnostic to be called internally to dump the contents
+// of a data buffer
+void dump_buffer(uint8_t *buffer, int len)
+{
+  Serial.print("start dump buffer: ");
+  for (int i = 0; i < len; i++)
+  {
+    Serial.print(buffer[i]);
+    Serial.print(" ");
+  }
+  Serial.println("end dump buffer");
+}
+
+// command functions
 
 // A method to send debug data across the serial link
-void send_debug_info(byte id, int value)
+void send_debug_info(uint8_t id, int value)
 {
-  byte debug_buffer[5] = {(byte)4, (byte)DEBUG_PRINT, 0, 0, 0};
+
+  uint8_t debug_buffer[64];
+  memset(debug_buffer, 0, sizeof(debug_buffer));
+
+  debug_buffer[0] = 4;
+  debug_buffer[1] = (uint8_t)DEBUG_PRINT;
   debug_buffer[2] = id;
   debug_buffer[3] = highByte(value);
   debug_buffer[4] = lowByte(value);
-  client.write(debug_buffer, 5);
+  if (xQueueSend(report_q, (const void *)debug_buffer, 20) != pdTRUE)
+  {
+    rtos_fatal_error_report((char *)"Send reqport_q for send_debug_info failed");
+  }
 }
 
 // command functions
 void serial_loopback()
 {
-  byte loop_back_buffer[3] = {2, (byte)SERIAL_LOOP_BACK, command_buffer[0]};
-  client.write(loop_back_buffer, 3);
+
+  uint8_t loop_back_buffer[64];
+
+  memset(loop_back_buffer, 0, sizeof(loop_back_buffer));
+
+  loop_back_buffer[0] = 2;
+  loop_back_buffer[1] = (uint8_t)SERIAL_LOOP_BACK;
+  loop_back_buffer[2] = command_buffer[2];
+  if (xQueueSend(report_q, (const void *)loop_back_buffer, 20) != pdTRUE)
+  {
+    rtos_fatal_error_report((char *)"Send reqport_q for serial_loopback failed");
+  }
+  vTaskDelay(14 / portTICK_PERIOD_MS);
 }
 
 void set_pin_mode()
 {
-  byte pin;
-  byte mode;
-  byte resolution;
-  byte channel;
+  uint8_t pin;
+  uint8_t mode;
+  uint8_t resolution;
+  uint8_t channel;
   unsigned int fx;
-  double frequency;
+  double frequency = 0.0;
   pin = command_buffer[0];
   mode = command_buffer[1];
 
   switch (mode)
   {
-    case AT_INPUT:
-      the_digital_pins[pin].pin_mode = mode;
-      the_digital_pins[pin].reporting_enabled = command_buffer[2];
-      pinMode(pin, INPUT);
-      break;
-    case AT_INPUT_PULLUP:
-      the_digital_pins[pin].pin_mode = mode;
-      the_digital_pins[pin].reporting_enabled = command_buffer[2];
-      pinMode(pin, INPUT_PULLUP);
-      break;
-    case AT_INPUT_PULLDOWN:
-      the_digital_pins[pin].pin_mode = mode;
-      the_digital_pins[pin].reporting_enabled = command_buffer[2];
-      pinMode(pin, INPUT_PULLDOWN);
-    case AT_TOUCH:
-      the_touch_pins[pin].differential = (command_buffer[2] << 8) + command_buffer[3];
-      the_touch_pins[pin].reporting_enabled = command_buffer[4];
-      break;
+  case AT_INPUT:
+    the_digital_pins[pin].pin_mode = AT_INPUT;
+    the_digital_pins[pin].reporting_enabled = command_buffer[2];
+    pinMode(pin, INPUT);
+    break;
+  case AT_INPUT_PULLUP:
+    the_digital_pins[pin].pin_mode = AT_INPUT_PULLUP;
+    the_digital_pins[pin].reporting_enabled = command_buffer[2];
+    pinMode(pin, INPUT_PULLUP);
+    break;
+  case AT_INPUT_PULLDOWN:
+    the_digital_pins[pin].pin_mode = AT_INPUT_PULLDOWN;
+    the_digital_pins[pin].reporting_enabled = command_buffer[2];
+    pinMode(pin, INPUT_PULLDOWN);
+    break;
+  case AT_TOUCH:
+    the_touch_pins[pin].differential = (command_buffer[2] << 8) + command_buffer[3];
+    the_touch_pins[pin].reporting_enabled = command_buffer[4];
+    // Serial.print("TOUCH");
+    // Serial.println(pin);
+    break;
+  case AT_OUTPUT:
+    the_digital_pins[pin].pin_mode = mode;
+    pinMode(pin, OUTPUT);
+    break;
+  case AT_ANALOG:
+    the_analog_pins[pin].pin_mode = mode;
+    the_analog_pins[pin].differential = (command_buffer[2] << 8) + command_buffer[3];
+    the_analog_pins[pin].reporting_enabled = command_buffer[4];
+    break;
+  case AT_PWM_OUT:
+    // command_buffer[2] = channel
+    // command_buffer[3] = resolution
+    // command_buffer[4] to command_buffer[11] = frequency
 
-    case AT_OUTPUT:
-      the_digital_pins[pin].pin_mode = mode;
-      pinMode(pin, OUTPUT);
-      break;
-    case AT_ANALOG:
-      the_analog_pins[pin].pin_mode = mode;
-      the_analog_pins[pin].differential = (command_buffer[2] << 8) + command_buffer[3];
-      the_analog_pins[pin].reporting_enabled = command_buffer[4];
-      break;
-    case AT_PWM_OUT:
-      // command_buffer[2] = channel
-      // command_buffer[3] = resolution
-      // command_buffer[4] to command_buffer[11] = frequency
+    channel = command_buffer[2];
+    resolution = command_buffer[3];
 
-      channel = command_buffer[2];
-      resolution = command_buffer[3];
+    memcpy(&frequency, &command_buffer[4], sizeof(double));
 
-      memcpy(&frequency, &command_buffer[4], sizeof(double));
-      fx = (unsigned int)frequency;
-      ledcSetup(channel, frequency, resolution);
-      ledcAttachPin(pin, channel);
-      break;
-    default:
-      break;
+    ledcSetup(channel, frequency, resolution);
+    ledcAttachPin(pin, channel);
+    break;
+  default:
+    break;
   }
 }
 
@@ -629,10 +678,10 @@ void set_analog_scanning_interval()
 
 void digital_write()
 {
-  byte pin;
-  byte value;
-  pin = command_buffer[0];
-  value = command_buffer[1];
+  uint8_t pin;
+  uint8_t value;
+  pin = command_buffer[2];
+  value = command_buffer[3];
   digitalWrite(pin, value);
 }
 
@@ -667,51 +716,55 @@ void modify_reporting()
 
   switch (command_buffer[0])
   {
-    case REPORTING_DISABLE_ALL:
-      for (int i = 0; i < MAX_PINS_SUPPORTED; i++)
-      {
-        the_digital_pins[i].reporting_enabled = false;
-      }
-      for (int i = 0; i < MAX_PINS_SUPPORTED; i++)
-      {
-        the_analog_pins[i].reporting_enabled = false;
-      }
-      break;
-    case REPORTING_ANALOG_ENABLE:
-      if (the_analog_pins[pin].pin_mode != AT_MODE_NOT_SET)
-      {
-        the_analog_pins[pin].reporting_enabled = true;
-      }
-      break;
-    case REPORTING_ANALOG_DISABLE:
-      if (the_analog_pins[pin].pin_mode != AT_MODE_NOT_SET)
-      {
-        the_analog_pins[pin].reporting_enabled = false;
-      }
-      break;
-    case REPORTING_DIGITAL_ENABLE:
-      if (the_digital_pins[pin].pin_mode != AT_MODE_NOT_SET)
-      {
-        the_digital_pins[pin].reporting_enabled = true;
-      }
-      break;
-    case REPORTING_DIGITAL_DISABLE:
-      if (the_digital_pins[pin].pin_mode != AT_MODE_NOT_SET)
-      {
-        the_digital_pins[pin].reporting_enabled = false;
-      }
-      break;
-    default:
-      break;
+  case REPORTING_DISABLE_ALL:
+    for (int i = 0; i < MAX_PINS_SUPPORTED; i++)
+    {
+      the_digital_pins[i].reporting_enabled = false;
+    }
+    for (int i = 0; i < MAX_PINS_SUPPORTED; i++)
+    {
+      the_analog_pins[i].reporting_enabled = false;
+    }
+    break;
+  case REPORTING_ANALOG_ENABLE:
+    if (the_analog_pins[pin].pin_mode != AT_MODE_NOT_SET)
+    {
+      the_analog_pins[pin].reporting_enabled = true;
+    }
+    break;
+  case REPORTING_ANALOG_DISABLE:
+    if (the_analog_pins[pin].pin_mode != AT_MODE_NOT_SET)
+    {
+      the_analog_pins[pin].reporting_enabled = false;
+    }
+    break;
+  case REPORTING_DIGITAL_ENABLE:
+    if (the_digital_pins[pin].pin_mode != AT_MODE_NOT_SET)
+    {
+      the_digital_pins[pin].reporting_enabled = true;
+    }
+    break;
+  case REPORTING_DIGITAL_DISABLE:
+    if (the_digital_pins[pin].pin_mode != AT_MODE_NOT_SET)
+    {
+      the_digital_pins[pin].reporting_enabled = false;
+    }
+    break;
+  default:
+    break;
   }
 }
 
 void get_firmware_version()
 {
-  byte report_message[5] = {4, FIRMWARE_REPORT, FIRMWARE_MAJOR, FIRMWARE_MINOR,
-                            FIRMWARE_BUILD
-                           };
-  client.write(report_message, 5);
+  uint8_t report_message[64] = {4, FIRMWARE_REPORT, FIRMWARE_MAJOR, FIRMWARE_MINOR,
+                                FIRMWARE_BUILD};
+
+  if (xQueueSend(report_q, (const void *)report_message, 20) != pdTRUE)
+  {
+    rtos_fatal_error_report((char *)"Send on report_q failed");
+  }
+  vTaskDelay(1000 / portTICK_PERIOD_MS);
 }
 
 /***************************************************
@@ -737,7 +790,7 @@ int find_servo()
 void servo_attach()
 {
 
-  byte pin = command_buffer[0];
+  uint8_t pin = command_buffer[0];
   int servo_found = -1;
 
   int minpulse = (command_buffer[1] << 8) + command_buffer[2];
@@ -753,15 +806,22 @@ void servo_attach()
   else
   {
     // no open servos available, send a report back to client
-    byte report_message[2] = {SERVO_UNAVAILABLE, pin};
-    client.write(report_message, 2);
+    byte report_message[64];
+    memset(report_message, 0, sizeof(report_message));
+
+    report_message[0] = SERVO_UNAVAILABLE;
+    report_message[1] = pin;
+    if (xQueueSend(report_q, (const void *)report_message, 20) != pdTRUE)
+    {
+      rtos_fatal_error_report((char *)"Send reqport_q for servo_attach failed");
+    }
   }
 }
 
 // set a servo to a given angle
 void servo_write()
 {
-  byte pin = command_buffer[0];
+  uint8_t pin = command_buffer[0];
   int angle = command_buffer[1];
   servos[0].write(angle);
   // find the servo object for the pin
@@ -779,7 +839,7 @@ void servo_write()
 // detach a servo and make it available for future use
 void servo_detach()
 {
-  byte pin = command_buffer[0];
+  uint8_t pin = command_buffer[0];
 
   // find the servo object for the pin
   for (int i = 0; i < MAX_SERVOS; i++)
@@ -811,25 +871,41 @@ void i2c_read()
   // stop transmitting flag [3]
 
   int message_size = 0;
-  byte address = command_buffer[0];
-  byte the_register = command_buffer[1];
+  uint8_t address = command_buffer[0];
+  uint8_t the_register = command_buffer[1];
+  uint8_t i2c_report_message[64];
+  memset(i2c_report_message, 0, sizeof(i2c_report_message));
 
   Wire.beginTransmission(address);
-  Wire.write((byte)the_register);
+  Wire.write((uint8_t)the_register);
   Wire.endTransmission(command_buffer[3]);      // default = true
   Wire.requestFrom(address, command_buffer[2]); // all bytes are returned in requestFrom
 
   // check to be sure correct number of bytes were returned by slave
   if (command_buffer[2] < Wire.available())
   {
-    byte report_message[4] = {3, I2C_TOO_FEW_BYTES_RCVD, 1, address};
-    client.write(report_message, 4);
+
+    i2c_report_message[0] = 3;
+    i2c_report_message[1] = I2C_TOO_FEW_BYTES_RCVD;
+    i2c_report_message[2] = 1;
+    i2c_report_message[3] = address;
+    if (xQueueSend(report_q, (const void *)i2c_report_message, 20) != pdTRUE)
+    {
+      rtos_fatal_error_report((char *)"Send reqport_q i2c_too_few_bytes failed");
+    }
     return;
   }
   else if (command_buffer[2] > Wire.available())
   {
-    byte report_message[4] = {3, I2C_TOO_MANY_BYTES_RCVD, 1, address};
-    client.write(report_message, 4);
+
+    i2c_report_message[0] = 3;
+    i2c_report_message[1] = I2C_TOO_MANY_BYTES_RCVD;
+    i2c_report_message[2] = 1;
+    i2c_report_message[3] = address;
+    if (xQueueSend(report_q, (const void *)i2c_report_message, 20) != pdTRUE)
+    {
+      rtos_fatal_error_report((char *)"Send reqport_q i2c_too_many_bytes failed");
+    }
     return;
   }
 
@@ -854,10 +930,9 @@ void i2c_read()
     i2c_report_message[5 + message_size] = Wire.read();
   }
   // send slave address, register and received bytes
-
-  for (int i = 0; i < message_size + 5; i++)
+  if (xQueueSend(report_q, (const void *)i2c_report_message, 20) != pdTRUE)
   {
-    client.write(i2c_report_message, message_size + 5);
+    rtos_fatal_error_report((char *)"Send reqport_q i2c_read failed");
   }
 }
 
@@ -896,44 +971,55 @@ void dht_new()
 {
   int d_read;
   // report consists of:
-  // 0 - byte count
+  // 0 - uint8_t count
   // 1 - report type
   // 2 - dht report subtype
   // 3 - pin number
   // 4 - error value
 
   // pre-build an error report in case of a read error
-  byte report_message[5] = {4, (byte)DHT_REPORT, (byte)DHT_READ_ERROR, (byte)0, (byte)0};
+  uint8_t report_message[64];
+  memset(report_message, 0, sizeof(report_message));
+  report_message[0] = 4;
+  report_message[1] = (uint8_t)DHT_REPORT;
+  report_message[2] = (uint8_t)DHT_READ_ERROR;
 
   devices.add_a_dht((uint8_t)command_buffer[0]);
+
   d_read = devices.dhts[devices.dht_index].dht_sensor->read();
 
   // if read return == zero it means no errors.
   if (d_read == 0)
   {
     devices.dht_index++;
+
   }
   else
   {
     // error found
     // send report and release the dht object
 
+
     report_message[3] = command_buffer[0]; // pin number
     report_message[4] = d_read;
-    client.write(report_message, 5);
+    if (xQueueSend(report_q, (const void *)report_message, 20) != pdTRUE)
+    {
+      rtos_fatal_error_report((char *)"Send reqport_q for DHT_READ_ERROR error failed");
+    }
     delete (devices.dhts[devices.dht_index].dht_sensor);
   }
 }
 
-
 // initialize the SPI interface
-void init_spi() {
+void init_spi()
+{
 
   int cs_pin;
 
-  //Serial.print(command_buffer[1]);
-  // initialize chip select GPIO pins
-  for (int i = 0; i < command_buffer[0]; i++) {
+  // Serial.print(command_buffer[1]);
+  //  initialize chip select GPIO pins
+  for (int i = 0; i < command_buffer[0]; i++)
+  {
     cs_pin = command_buffer[1 + i];
     // Chip select is active-low, so we'll initialise it to a driven-high state
     pinMode(cs_pin, OUTPUT);
@@ -943,16 +1029,22 @@ void init_spi() {
 }
 
 // write a number of blocks to the SPI device
-void write_blocking_spi() {
+void write_blocking_spi()
+{
   int num_bytes = command_buffer[0];
 
-  for (int i = 0; i < num_bytes; i++) {
-    SPI.transfer(command_buffer[1 + i] );
+  for (int i = 0; i < num_bytes; i++)
+  {
+    SPI.transfer(command_buffer[1 + i]);
   }
 }
 
 // read a number of bytes from the SPI device
-void read_blocking_spi() {
+void read_blocking_spi()
+{
+  uint8_t spi_report_message[64];
+  memset(spi_report_message, 0, sizeof(spi_report_message));
+
   // command_buffer[0] == number of bytes to read
   // command_buffer[1] == read register
 
@@ -974,65 +1066,87 @@ void read_blocking_spi() {
 
   // now read the specified number of bytes and place
   // them in the report buffer
-  for (int i = 0; i < command_buffer[0] ; i++) {
+  for (int i = 0; i < command_buffer[0]; i++)
+  {
     spi_report_message[i + 4] = SPI.transfer(0x00);
   }
-  client.write(spi_report_message, command_buffer[0] + 4);
+  if (xQueueSend(report_q, (const void *)spi_report_message, 20) != pdTRUE)
+  {
+    rtos_fatal_error_report((char *)"Send reqport_q for read_blocking spi error failed");
+  }
 }
 
 // modify the SPI format
-void set_format_spi() {
+void set_format_spi()
+{
 
   SPISettings(command_buffer[0], command_buffer[1], command_buffer[2]);
-
 }
 
 // set the SPI chip select line
-void spi_cs_control() {
+void spi_cs_control()
+{
   int cs_pin = command_buffer[0];
   int cs_state = command_buffer[1];
   digitalWrite(cs_pin, cs_state);
 }
 
 // Initialize the OneWire interface
-void onewire_init() {
+void onewire_init()
+{
   ow = new OneWire(command_buffer[0]);
 }
 
 // send a OneWire reset
-void onewire_reset() {
+void onewire_reset()
+{
 
   uint8_t reset_return = ow->reset();
-  uint8_t onewire_report_message[] = {3, ONE_WIRE_REPORT, ONE_WIRE_RESET, reset_return};
 
-  client.write(onewire_report_message, 4);
+  uint8_t onewire_report_message[64];
+  memset(onewire_report_message, 0, sizeof(onewire_report_message));
+
+  onewire_report_message[0] = 3;
+  onewire_report_message[1] = ONE_WIRE_REPORT;
+  onewire_report_message[2] = ONE_WIRE_RESET;
+  onewire_report_message[3] = reset_return;
+
+  if (xQueueSend(report_q, (const void *)onewire_report_message, 20) != pdTRUE)
+  {
+    rtos_fatal_error_report((char *)"Send reqport_q for one wire reset failed");
+  }
 }
 
 // send a OneWire select
-void onewire_select() {
+void onewire_select()
+{
 
   uint8_t dev_address[8];
 
-  for (int i = 0; i < 8; i++) {
+  for (int i = 0; i < 8; i++)
+  {
     dev_address[i] = command_buffer[i];
   }
   ow->select(dev_address);
 }
 
 // send a OneWire skip
-void onewire_skip() {
+void onewire_skip()
+{
   ow->skip();
 }
 
 // write 1 byte to the OneWire device
-void onewire_write() {
+void onewire_write()
+{
 
   // write data and power values
   ow->write(command_buffer[0], command_buffer[1]);
 }
 
 // read one byte from the OneWire device
-void onewire_read() {
+void onewire_read()
+{
 
   // onewire_report_message[0] = length of message including this element
   // onewire_report_message[1] = ONEWIRE_REPORT
@@ -1040,41 +1154,76 @@ void onewire_read() {
   // onewire_report_message[3] = data read
 
   uint8_t data = ow->read();
+  uint8_t onewire_report_message[64];
+  memset(onewire_report_message, 0, sizeof(onewire_report_message));
 
-  uint8_t onewire_report_message[] = {3, ONE_WIRE_REPORT, ONE_WIRE_READ, data};
+  onewire_report_message[0] = 3;
+  onewire_report_message[1] = ONE_WIRE_REPORT;
+  onewire_report_message[2] = ONE_WIRE_READ;
+  onewire_report_message[3] = data;
 
-  client.write(onewire_report_message, 4);
+  if (xQueueSend(report_q, (const void *)onewire_report_message, 20) != pdTRUE)
+  {
+    rtos_fatal_error_report((char *)"Send reqport_q for one wire read failed");
+  }
 }
 
 // Send a OneWire reset search command
-void onewire_reset_search() {
+void onewire_reset_search()
+{
 
   ow->reset_search();
 }
 
 // Send a OneWire search command
-void onewire_search() {
+void onewire_search()
+{
+  uint8_t onewire_report_message[64];
 
-  uint8_t onewire_report_message[] = {10, ONE_WIRE_REPORT, ONE_WIRE_SEARCH,
-                                      0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
-                                      0xff
-                                     };
-  bool found;
+  memset(onewire_report_message, 0, sizeof(onewire_report_message));
 
-  ow->search(&onewire_report_message[3], found);
-  client.write(onewire_report_message, 11);
+  onewire_report_message[0] = 10;
+  onewire_report_message[1] = ONE_WIRE_REPORT;
+  onewire_report_message[2] = ONE_WIRE_SEARCH;
+  onewire_report_message[3] = 0xff;
+  onewire_report_message[4] = 0xff;
+  onewire_report_message[5] = 0xff;
+  onewire_report_message[6] = 0xff;
+  onewire_report_message[7] = 0xff;
+  onewire_report_message[8] = 0xff;
+  onewire_report_message[9] = 0xff;
+  onewire_report_message[10] = 0xff;
+
+  ow->search(&onewire_report_message[3]);
+
+  if (xQueueSend(report_q, (const void *)onewire_report_message, 20) != pdTRUE)
+  {
+    rtos_fatal_error_report((char *)"Send reqport_q for one wire search failed");
+  }
 }
 
 // Calculate a OneWire CRC8 on a buffer containing a specified number of bytes
-void onewire_crc8() {
+void onewire_crc8()
+{
+  uint8_t onewire_report_message[64];
 
-  uint8_t crc = ow->crc8(&command_buffer[1], command_buffer[0]);
-  uint8_t onewire_report_message[] = {3, ONE_WIRE_REPORT, ONE_WIRE_CRC8, crc};
-  client.write(onewire_report_message, 4);
+  memset(onewire_report_message, 0, sizeof(onewire_report_message));
+
+  onewire_report_message[0] = 3;
+  onewire_report_message[1] = ONE_WIRE_REPORT;
+  onewire_report_message[2] = ONE_WIRE_CRC8;
+  onewire_report_message[3] = ow->crc8(&command_buffer[1], command_buffer[0]);
+
+  if (xQueueSend(report_q, (const void *)onewire_report_message, 20) != pdTRUE)
+  {
+    rtos_fatal_error_report((char *)"Send reqport_q for one wire crc8 failed");
+  }
 }
 
-// Stepper Motor support
-void set_pin_mode_stepper() {
+// Stepper Motor supported
+// Stepper Motor supported
+void set_pin_mode_stepper()
+{
   // motor_id = command_buffer[0]
   // interface = command_buffer[1]
   // pin1 = command_buffer[2]
@@ -1088,8 +1237,8 @@ void set_pin_mode_stepper() {
                         command_buffer[5], command_buffer[6]);
 }
 
-
-void stepper_move_to() {
+void stepper_move_to()
+{
   // motor_id = command_buffer[0]
   // position MSB = command_buffer[1]
   // position MSB-1 = command_buffer[2]
@@ -1101,14 +1250,18 @@ void stepper_move_to() {
   long position = (long)(command_buffer[1]) << 24;
   position += (long)(command_buffer[2]) << 16;
   position += command_buffer[3] << 8;
-  position += command_buffer[4] ;
-  if (command_buffer[5]) {
+  position += command_buffer[4];
+  if (command_buffer[5])
+  {
     position *= -1;
   }
+
   devices.steppers[command_buffer[0]]->moveTo(position);
 }
 
-void stepper_move() {
+void stepper_move()
+{
+
   // motor_id = command_buffer[0]
   // position MSB = command_buffer[1]
   // position MSB-1 = command_buffer[2]
@@ -1120,116 +1273,138 @@ void stepper_move() {
   long position = (long)(command_buffer[1]) << 24;
   position += (long)(command_buffer[2]) << 16;
   position += command_buffer[3] << 8;
-  position += command_buffer[4] ;
-
-  if (command_buffer[5]) {
+  position += command_buffer[4];
+  if (command_buffer[5])
+  {
     position *= -1;
   }
   devices.steppers[command_buffer[0]]->move(position);
 }
 
-void stepper_run() {
+void stepper_run()
+{
+  //#if !defined (__AVR_ATmega328P__)
   devices.stepper_run_modes[command_buffer[0]] = STEPPER_RUN;
   devices.ok_to_run_motors = true;
 }
 
-void stepper_run_speed() {
+void stepper_run_speed()
+{
   // motor_id = command_buffer[0]
   devices.stepper_run_modes[command_buffer[0]] = STEPPER_RUN_SPEED;
   devices.ok_to_run_motors = true;
 }
 
-void stepper_set_max_speed() {
+void stepper_set_max_speed()
+{
   // motor_id = command_buffer[0]
   // speed_msb = command_buffer[1]
   // speed_lsb = command_buffer[2]
 
-  float max_speed = (float) ((command_buffer[1] << 8) + command_buffer[2]);
+  float max_speed = (float)((command_buffer[1] << 8) + command_buffer[2]);
   devices.steppers[command_buffer[0]]->setMaxSpeed(max_speed);
 }
 
-void stepper_set_acceleration() {
+void stepper_set_acceleration()
+{
   // motor_id = command_buffer[0]
   // accel_msb = command_buffer[1]
   // accel = command_buffer[2]
 
-  float acceleration = (float) ((command_buffer[1] << 8) + command_buffer[2]);
+  float acceleration = (float)((command_buffer[1] << 8) + command_buffer[2]);
   devices.steppers[command_buffer[0]]->setAcceleration(acceleration);
 }
 
-void stepper_set_speed() {
+void stepper_set_speed()
+{
 
   // motor_id = command_buffer[0]
   // speed_msb = command_buffer[1]
   // speed_lsb = command_buffer[2]
-  float speed = (float) ((command_buffer[1] << 8) + command_buffer[2]);
+  //#if !defined (__AVR_ATmega328P__)
+
+  float speed = (float)((command_buffer[1] << 8) + command_buffer[2]);
   devices.steppers[command_buffer[0]]->setSpeed(speed);
 }
 
-void stepper_get_distance_to_go() {
+void stepper_get_distance_to_go()
+{
+  // motor_id = command_buffer[0]
+  // report = STEPPER_DISTANCE_TO_GO, motor_id, distance(8 bytes)
   // motor_id = command_buffer[0]
 
-  // report = STEPPER_DISTANCE_TO_GO, motor_id, distance(8 bytes)
-
-
-
-  byte report_message[7] = {6, STEPPER_DISTANCE_TO_GO, command_buffer[0]};
+  uint8_t report_message[64];
+  memset(report_message, 0, sizeof(report_message));
 
   long dtg = devices.steppers[command_buffer[0]]->distanceToGo();
 
+  report_message[0] = 6;
+  report_message[1] = STEPPER_DISTANCE_TO_GO;
+  report_message[2] = command_buffer[0];
+  report_message[3] = (uint8_t)((dtg & 0xFF000000) >> 24);
+  report_message[4] = (uint8_t)((dtg & 0x00FF0000) >> 16);
+  report_message[5] = (uint8_t)((dtg & 0x0000FF00) >> 8);
+  report_message[6] = (uint8_t)((dtg & 0x000000FF));
 
-  report_message[3] = (byte) ((dtg & 0xFF000000) >> 24);
-  report_message[4] = (byte) ((dtg & 0x00FF0000) >> 16);
-  report_message[5] = (byte) ((dtg & 0x0000FF00) >> 8);
-  report_message[6] = (byte) ((dtg & 0x000000FF));
-
-  // motor_id = command_buffer[0]
-  client.write(report_message, 7);
+  if (xQueueSend(report_q, (const void *)report_message, 20) != pdTRUE)
+  {
+    rtos_fatal_error_report((char *)"Send reqport_q for stepper_get_distance_to_go failed");
+  }
 }
 
-void stepper_get_target_position() {
+void stepper_get_target_position()
+{
   // motor_id = command_buffer[0]
 
-  // report = STEPPER_TARGET_POSITION, motor_id, distance(8 bytes)
+  // report = STEPPER_TARGET_POSITION, motor_id, distance(8 uint8_ts)
 
-
-
-  byte report_message[7] = {6, STEPPER_TARGET_POSITION, command_buffer[0]};
+  uint8_t report_message[64];
+  memset(report_message, 0, sizeof(report_message));
 
   long target = devices.steppers[command_buffer[0]]->targetPosition();
-
-
-  report_message[3] = (byte) ((target & 0xFF000000) >> 24);
-  report_message[4] = (byte) ((target & 0x00FF0000) >> 16);
-  report_message[5] = (byte) ((target & 0x0000FF00) >> 8);
-  report_message[6] = (byte) ((target & 0x000000FF));
+  report_message[0] = 6;
+  report_message[1] = STEPPER_TARGET_POSITION;
+  report_message[2] = command_buffer[0];
+  report_message[3] = (uint8_t)((target & 0xFF000000) >> 24);
+  report_message[4] = (uint8_t)((target & 0x00FF0000) >> 16);
+  report_message[5] = (uint8_t)((target & 0x0000FF00) >> 8);
+  report_message[6] = (uint8_t)((target & 0x000000FF));
 
   // motor_id = command_buffer[0]
-  client.write(report_message, 7);
+  if (xQueueSend(report_q, (const void *)report_message, 20) != pdTRUE)
+  {
+    rtos_fatal_error_report((char *)"Send reqport_q for stepper_get_target_position failed");
+  }
 }
 
-void stepper_get_current_position() {
+void stepper_get_current_position()
+{
   // motor_id = command_buffer[0]
 
-  // report = STEPPER_CURRENT_POSITION, motor_id, distance(8 bytes)
+  // report = STEPPER_CURRENT_POSITION, motor_id, distance(8 uint8_ts)
 
-
-
-  byte report_message[7] = {6, STEPPER_CURRENT_POSITION, command_buffer[0]};
+  uint8_t report_message[64];
+  memset(report_message, 0, sizeof(report_message));
 
   long position = devices.steppers[command_buffer[0]]->targetPosition();
 
-
-  report_message[3] = (byte) ((position & 0xFF000000) >> 24);
-  report_message[4] = (byte) ((position & 0x00FF0000) >> 16);
-  report_message[5] = (byte) ((position & 0x0000FF00) >> 8);
-  report_message[6] = (byte) ((position & 0x000000FF));
+  report_message[0] = 6;
+  report_message[1] = STEPPER_CURRENT_POSITION;
+  report_message[2] = command_buffer[0];
+  report_message[3] = (uint8_t)((position & 0xFF000000) >> 24);
+  report_message[4] = (uint8_t)((position & 0x00FF0000) >> 16);
+  report_message[5] = (uint8_t)((position & 0x0000FF00) >> 8);
+  report_message[6] = (uint8_t)((position & 0x000000FF));
 
   // motor_id = command_buffer[0]
-  client.write(report_message, 7);
+  if (xQueueSend(report_q, (const void *)report_message, 20) != pdTRUE)
+  {
+    rtos_fatal_error_report((char *)"Send reqport_q for stepper_get_current_position failed");
+  }
 }
 
-void stepper_set_current_position() {
+void stepper_set_current_position()
+{
   // motor_id = command_buffer[0]
   // position MSB = command_buffer[1]
   // position MSB-1 = command_buffer[2]
@@ -1240,141 +1415,104 @@ void stepper_set_current_position() {
   long position = (long)(command_buffer[2]) << 24;
   position += (long)(command_buffer[2]) << 16;
   position += command_buffer[3] << 8;
-  position += command_buffer[4] ;
+  position += command_buffer[4];
 
   devices.steppers[command_buffer[0]]->setCurrentPosition(position);
 }
 
-void stepper_run_speed_to_position() {
+void stepper_run_speed_to_position()
+{
   devices.stepper_run_modes[command_buffer[0]] = STEPPER_RUN_SPEED_TO_POSITION;
   devices.ok_to_run_motors = true;
-
 }
 
-void stepper_stop() {
+void stepper_stop()
+{
   devices.steppers[command_buffer[0]]->stop();
   devices.steppers[command_buffer[0]]->disableOutputs();
   devices.stepper_run_modes[command_buffer[0]] = STEPPER_STOP;
-
-
 }
 
-void stepper_disable_outputs() {
+void stepper_disable_outputs()
+{
   devices.steppers[command_buffer[0]]->disableOutputs();
 }
 
-void stepper_enable_outputs() {
+void stepper_enable_outputs()
+{
   devices.steppers[command_buffer[0]]->enableOutputs();
 }
-// mark
-void stepper_set_minimum_pulse_width() {
+
+void stepper_set_minimum_pulse_width()
+{
   unsigned int pulse_width = (command_buffer[1] << 8) + command_buffer[2];
   devices.steppers[command_buffer[0]]->setMinPulseWidth(pulse_width);
 }
 
-void stepper_set_enable_pin() {
-  devices.steppers[command_buffer[0]]->setEnablePin((uint8_t) command_buffer[1]);
+void stepper_set_enable_pin()
+{
+  devices.steppers[command_buffer[0]]->setEnablePin((uint8_t)command_buffer[1]);
 }
 
-void stepper_set_3_pins_inverted() {
+void stepper_set_3_pins_inverted()
+{
   // command_buffer[1] = directionInvert
   // command_buffer[2] = stepInvert
   // command_buffer[3] = enableInvert
-  devices.steppers[command_buffer[0]]->setPinsInverted((bool) command_buffer[1],
-      (bool) command_buffer[2],
-      (bool) command_buffer[3]);
+  devices.steppers[command_buffer[0]]->setPinsInverted((bool)command_buffer[1],
+                                                       (bool)command_buffer[2],
+                                                       (bool)command_buffer[3]);
 }
 
-void stepper_set_4_pins_inverted() {
+void stepper_set_4_pins_inverted()
+{
   // command_buffer[1] = pin1
   // command_buffer[2] = pin2
   // command_buffer[3] = pin3
   // command_buffer[4] = pin4
   // command_buffer[5] = enable
-  devices.steppers[command_buffer[0]]->setPinsInverted((bool) command_buffer[1],
-      (bool) command_buffer[2],
-      (bool) command_buffer[3],
-      (bool) command_buffer[4],
-      (bool) command_buffer[5]);
+  devices.steppers[command_buffer[0]]->setPinsInverted((bool)command_buffer[1],
+                                                       (bool)command_buffer[2],
+                                                       (bool)command_buffer[3],
+                                                       (bool)command_buffer[4],
+                                                       (bool)command_buffer[5]);
 }
 
-void stepper_is_running() {
+void stepper_is_running()
+{
   // motor_id = command_buffer[0]
 
   // report = STEPPER_IS_RUNNING, motor_id, distance(8 bytes)
 
+  uint8_t report_message[64];
+  memset(report_message, 0, sizeof(report_message));
 
-  byte report_message[3] = {2, STEPPER_RUNNING_REPORT, command_buffer[0]};
+  report_message[0] = 2;
+  report_message[1] = STEPPER_RUNNING_REPORT;
+  report_message[2] = command_buffer[0];
+  report_message[3] = devices.steppers[command_buffer[0]]->isRunning();
 
-  report_message[2]  = devices.steppers[command_buffer[0]]->isRunning();
-
-  client.write(report_message, 3);
+  if (xQueueSend(report_q, (const void *)report_message, 20) != pdTRUE)
+  {
+    rtos_fatal_error_report((char *)"Send reqport_q for stepper_is_running failed");
+  }
 }
-
 
 void stop_all_reports()
 {
   stop_reports = true;
-  delay(20);
-  Serial.flush();
+  vTaskDelay(20 / portTICK_PERIOD_MS);
 }
 
 void enable_all_reports()
 {
-  Serial.flush();
   stop_reports = false;
-  delay(20);
-}
-void get_next_command()
-{
-  byte command;
-  byte packet_length;
-  command_descriptor command_entry;
-
-  // clear the command buffer
-  memset(command_buffer, 0, sizeof(command_buffer));
-
-  // if there is no command waiting, then return
-  if (not client.available())
-  {
-    return;
-  }
-  // get the packet length
-  packet_length = (byte)client.read();
-
-  while (not client.available())
-  {
-    delay(1);
-  }
-
-  // get the command byte
-  command = (byte)client.read();
-
-  // uncomment the next line to see the packet length and command
-  //send_debug_info(packet_length, command);
-  command_entry = command_table[command];
-
-  if (packet_length > 1)
-  {
-    // get the data for that command
-    for (int i = 0; i < packet_length - 1; i++)
-    {
-      // need this delay or data read is not correct
-      while (not client.available())
-      {
-        delay(1);
-      }
-      command_buffer[i] = (byte)client.read();
-      // uncomment out to see each of the bytes following the command
-      //send_debug_info(i, command_buffer[i]);
-    }
-  }
-  command_entry.command_func();
+  vTaskDelay(20 / portTICK_PERIOD_MS);
 }
 
-void scan_digital_inputs()
+void scan_digital_inputs(void *parameter)
 {
-  byte value;
+  uint8_t value;
 
   // report message
 
@@ -1382,33 +1520,48 @@ void scan_digital_inputs()
   // byte 1 = report type
   // byte 2 = pin number
   // byte 3 = value
-  byte report_message[4] = {3, DIGITAL_REPORT, 0, 0};
 
-  for (int i = 0; i < MAX_PINS_SUPPORTED; i++)
+  uint8_t report_message[64];
+
+  while (1)
   {
-    if (the_digital_pins[i].pin_mode == AT_INPUT ||
-        the_digital_pins[i].pin_mode == AT_INPUT_PULLUP ||
-        the_digital_pins[i].pin_mode == AT_INPUT_PULLDOWN)
+
+    if (can_scan)
     {
-      if (the_digital_pins[i].reporting_enabled)
+      for (int i = 0; i < MAX_PINS_SUPPORTED; i++)
       {
-        // if the value changed since last read
-        value = (byte)digitalRead(i);
-        if (value != the_digital_pins[i].last_value)
+        if (the_digital_pins[i].pin_mode == AT_INPUT ||
+            the_digital_pins[i].pin_mode == AT_INPUT_PULLUP ||
+            the_digital_pins[i].pin_mode == AT_INPUT_PULLDOWN)
         {
-          the_digital_pins[i].last_value = value;
-          report_message[2] = (byte)i;
-          report_message[3] = value;
-          client.write(report_message, 4);
+          if (the_digital_pins[i].reporting_enabled)
+          {
+            // if the value changed since last read
+            value = (uint8_t)digitalRead(the_digital_pins[i].pin_number);
+            if (value != the_digital_pins[i].last_value)
+            {
+              memset(report_message, 0, sizeof(report_message));
+              report_message[0] = 3;
+              report_message[1] = DIGITAL_REPORT;
+              the_digital_pins[i].last_value = value;
+              report_message[2] = (uint8_t)i;
+              report_message[3] = value;
+              if (xQueueSend(report_q, (const void *)report_message, 20) != pdTRUE)
+              {
+                rtos_fatal_error_report((char *)"Send reqport_q for scan_digital_inputs failed");
+              }
+            }
+            vTaskDelay(1 / portTICK_PERIOD_MS);
+          }
         }
       }
+      vTaskDelay(1 / portTICK_PERIOD_MS);
     }
   }
 }
 
-void scan_analog_inputs()
+void scan_analog_inputs(void *parameters)
 {
-  int value;
 
   // report message
 
@@ -1418,55 +1571,64 @@ void scan_analog_inputs()
   // byte 3 = high order byte of value
   // byte 4 = low order byte of value
 
-  byte report_message[5] = {4, ANALOG_REPORT, 0, 0, 0};
-
-  //uint8_t adjusted_pin_number;
+  int value;
+  uint8_t report_message[64];
   int differential;
 
-  current_millis = millis();
-  if (current_millis - previous_millis > analog_sampling_interval)
+  while (1)
   {
-    previous_millis = current_millis;
-
-    for (int i = 0; i < MAX_PINS_SUPPORTED; i++)
+    if (can_scan)
     {
-      if (the_analog_pins[i].pin_mode == AT_ANALOG)
+      for (int i = 0; i < MAX_PINS_SUPPORTED; i++)
       {
-        if (the_analog_pins[i].reporting_enabled)
+        if (the_analog_pins[i].pin_mode == AT_ANALOG)
         {
-          // if the value changed since last read
-          // adjust pin number for the actual read
-          //adjusted_pin_number = (uint8_t)(analog_read_pins[i]);
-          value = analogRead(i);
-          differential = abs(value - the_analog_pins[i].last_value);
-          if (differential >= the_analog_pins[i].differential)
+          if (the_analog_pins[i].reporting_enabled)
           {
-            //trigger value achieved, send out the report
-            the_analog_pins[i].last_value = value;
-            // input_message[1] = the_analog_pins[i].pin_number;
-            report_message[2] = (byte)i;
-            report_message[3] = highByte(value); // get high order byte
-            report_message[4] = lowByte(value);
-            client.write(report_message, 5);
-            delay(1);
+            value = analogRead(i);
+            //Serial.println(value);
+
+            differential = abs(value - the_analog_pins[i].last_value);
+            if (differential >= the_analog_pins[i].differential)
+            {
+              memset(report_message, 0, sizeof(report_message));
+
+              report_message[0] = 4;
+              report_message[1] = ANALOG_REPORT;
+              // trigger value achieved, send out the report
+              the_analog_pins[i].last_value = value;
+              // input_message[1] = the_analog_pins[i].pin_number;
+              report_message[2] = (uint8_t)i;
+              report_message[3] = highByte(value); // get high order byte
+              report_message[4] = lowByte(value);
+              // report_message[3] = value;
+              if (xQueueSend(report_q, (const void *)report_message, 20) != pdTRUE)
+              {
+                rtos_fatal_error_report((char *)"Send reqport_q for scan_analog_inputs failed");
+              }
+              vTaskDelay(analog_sampling_interval / portTICK_PERIOD_MS);
+            }
           }
         }
       }
     }
+    vTaskDelay(1 / portTICK_PERIOD_MS);
   }
 }
 
-void scan_sonars()
+void scan_sonars(void *parameter)
 {
   unsigned int distance;
+  uint8_t report_message[64];
 
-  if (devices.sonars_index)
+  while (1)
   {
+    if (can_scan)
     {
-      sonar_current_millis = millis();
-      if (sonar_current_millis - sonar_previous_millis > sonar_scan_interval)
+      // Serial.print("can scan sonars");
+      if (devices.sonars_index)
       {
-        sonar_previous_millis = sonar_current_millis;
+        //Serial.println(devices.sonars_index);
         distance = devices.sonars[devices.last_sonar_visited].usonic->read();
         if (distance != devices.sonars[devices.last_sonar_visited].last_value)
         {
@@ -1477,23 +1639,32 @@ void scan_sonars()
           // byte 2 = trigger pin number
           // byte 3 = distance high order byte
           // byte 4 = distance low order byte
-          byte report_message[5] = {4, SONAR_DISTANCE, devices.sonars[devices.last_sonar_visited]
-                                    .trigger_pin,
-                                    (byte)(distance >> 8), (byte)(distance & 0xff)
-                                   };
-          client.write(report_message, 5);
+          memset(report_message, 0, sizeof(report_message));
+
+          report_message[0] = 4;
+          report_message[1] = SONAR_DISTANCE;
+          report_message[2] = devices.sonars[devices.last_sonar_visited].trigger_pin;
+          report_message[3] = (uint8_t)(distance >> 8);
+          report_message[4] = (uint8_t)(distance & 0xff);
+          if (xQueueSend(report_q, (const void *)report_message, 20) != pdTRUE)
+          {
+            rtos_fatal_error_report((char *)"Send reqport_q for scan_sonar failed");
+          }
+          vTaskDelay(sonar_scan_interval / portTICK_PERIOD_MS);
         }
         devices.last_sonar_visited++;
         if (devices.last_sonar_visited == devices.sonars_index)
         {
           devices.last_sonar_visited = 0;
         }
+        vTaskDelay(sonar_scan_interval / portTICK_PERIOD_MS);
       }
     }
+    vTaskDelay(sonar_scan_interval  / portTICK_PERIOD_MS);
   }
 }
 
-void scan_dhts()
+void scan_dhts(void *parameter)
 {
   // prebuild report for valid data
   // reuse the report if a read command fails
@@ -1513,55 +1684,71 @@ void scan_dhts()
   // byte 9 = temperature byte 2
   // byte 10 = temperature byte 3
   // byte 11 = temperature byte 4
-  byte report_message[12] = {11, DHT_REPORT, DHT_DATA, 0, 0, 0, 0, 0, 0, 0, 0, 0};
 
-  byte d_read;
+  uint8_t report_message[64];
+
+  uint8_t d_read;
 
   float dht_data;
 
-  // are there any dhts to read?
-  if (devices.dht_index)
+  while (1)
   {
-    // is it time to do the read? This should occur every 2 seconds
-    dht_current_millis = millis();
-    if (dht_current_millis - dht_previous_millis > dht_scan_interval)
+    if (can_scan)
     {
-      // update for the next scan
-      dht_previous_millis = dht_current_millis;
-
-      // read and report all the dht sensors
-      for (int i = 0; i < devices.dht_index; i++)
+      // are there any dhts to read?
+      //Serial.println(devices.dht_index);
+      if (devices.dht_index)
       {
-        report_message[3] = devices.dhts[i].pin;
-        // get humidity
-        dht_data = devices.dhts[i].dht_sensor->getHumidity();
-        memcpy(&report_message[4], &dht_data, sizeof dht_data);
+        // is it time to do the read? This should occur every 2 seconds
 
-        // get temperature
-        dht_data = devices.dhts[i].dht_sensor->getTemperature();
-        memcpy(&report_message[8], &dht_data, sizeof dht_data);
-        client.write(report_message, 12);
-
-        // now read do a read for this device for next go around
-        d_read = devices.dhts[i].dht_sensor->read();
-
-        if (d_read)
+        // read and report all the dht sensors
+        for (int i = 0; i < devices.dht_index; i++)
         {
-          // error found
-          // send report
-          report_message[0] = 4;
+          memset(report_message, 0, sizeof(report_message));
+          report_message[0] = 11;
           report_message[1] = DHT_REPORT;
-          report_message[2] = DHT_READ_ERROR;
-          report_message[3] = devices.dhts[i].pin; // pin number
-          report_message[4] = d_read;
-          client.write(report_message, 5);
+          report_message[2] = DHT_DATA;
+          report_message[3] = devices.dhts[i].pin;
+          // get humidity
+          dht_data = devices.dhts[i].dht_sensor->getHumidity();
+          memcpy(&report_message[4], &dht_data, sizeof dht_data);
+
+          // get temperature
+          dht_data = devices.dhts[i].dht_sensor->getTemperature();
+          memcpy(&report_message[8], &dht_data, sizeof dht_data);
+
+          if (xQueueSend(report_q, (const void *)report_message, 20) != pdTRUE)
+          {
+            rtos_fatal_error_report((char *)"Send reqport_q for scan_dhts failed");
+          }
+
+          // now read do a read for this device for next go around
+          d_read = devices.dhts[i].dht_sensor->read();
+
+          if (d_read)
+          {
+            // error found
+            // send report
+            report_message[0] = 4;
+            report_message[1] = DHT_REPORT;
+            report_message[2] = DHT_READ_ERROR;
+            report_message[3] = devices.dhts[i].pin; // pin number
+            report_message[4] = d_read;
+
+            if (xQueueSend(report_q, (const void *)report_message, 20) != pdTRUE)
+            {
+              rtos_fatal_error_report((char *)"Send reqport_q for scan_dhts(2) failed");
+            }
+            vTaskDelay(dht_scan_interval / portTICK_PERIOD_MS);
+          }
         }
       }
+      vTaskDelay(dht_scan_interval / portTICK_PERIOD_MS);
     }
   }
 }
 
-void scan_touch()
+void scan_touch(void *parameter)
 {
   int value;
 
@@ -1573,45 +1760,56 @@ void scan_touch()
   // byte 3 = high order byte of value
   // byte 4 = low order byte of value
 
-  byte report_message[5] = {4, TOUCH_REPORT, 0, 0, 0};
+  uint8_t report_message[64];
 
-  int differential;
-
-  touch_current_millis = millis();
-  if (touch_current_millis - touch_previous_millis > touch_sampling_interval)
+  while (1)
   {
-    touch_previous_millis = touch_current_millis;
-
-    for (int i = 0; i < MAX_PINS_SUPPORTED; i++)
+    if (can_scan)
     {
+      memset(report_message, 0, sizeof(report_message));
+      report_message[0] = 4;
+      report_message[1] = TOUCH_REPORT;
 
-      if (the_touch_pins[i].reporting_enabled)
+      int differential;
+
+      for (int i = 0; i < MAX_PINS_SUPPORTED; i++)
       {
-        value = touchRead(i);
-
-        differential = abs(value - the_touch_pins[i].last_value);
-        if (differential >= the_touch_pins[i].differential)
+        if (the_touch_pins[i].reporting_enabled)
         {
-          //trigger value achieved, send out the report
-          the_touch_pins[i].last_value = value;
-          // input_message[1] = the_analog_pins[i].pin_number;
-          report_message[2] = (byte)i;
-          report_message[3] = highByte(value); // get high order byte
-          report_message[4] = lowByte(value);
-          client.write(report_message, 5);
-          delay(1);
+          value = touchRead(i);
+          Serial.println(value);
+
+          differential = abs(value - the_touch_pins[i].last_value);
+          if (differential >= the_touch_pins[i].differential)
+          {
+            // trigger value achieved, send out the report
+            the_touch_pins[i].last_value = value;
+            // input_message[1] = the_analog_pins[i].pin_number;
+            report_message[2] = (uint8_t)i;
+            report_message[3] = highByte(value); // get high order byte
+            report_message[4] = lowByte(value);
+
+            if (xQueueSend(report_q, (const void *)report_message, 20) != pdTRUE)
+            {
+              rtos_fatal_error_report((char *)"Send reqport_q for scan_touch failed");
+            }
+          }
         }
       }
+      vTaskDelay(touch_sampling_interval / portTICK_PERIOD_MS);
     }
   }
 }
 
-void reset_data() {
+void reset_data()
+{
+  WiFi.disconnect();
   ESP.restart();
 }
 
-void init_pin_structures() {
-  for (byte i = 0; i < MAX_PINS_SUPPORTED; i++)
+void init_pin_structures()
+{
+  for (uint8_t i = 0; i < MAX_PINS_SUPPORTED; i++)
   {
     the_digital_pins[i].pin_number = i;
     the_digital_pins[i].pin_mode = AT_MODE_NOT_SET;
@@ -1630,7 +1828,7 @@ void init_pin_structures() {
   }
 
   // establish the analog pin array
-  for (byte i = 0; i < MAX_PINS_SUPPORTED; i++)
+  for (uint8_t i = 0; i < MAX_PINS_SUPPORTED; i++)
   {
     the_analog_pins[i].pin_number = i;
     the_analog_pins[i].pin_mode = AT_MODE_NOT_SET;
@@ -1640,26 +1838,42 @@ void init_pin_structures() {
   }
 }
 
-void run_steppers() {
+void run_steppers(void *parameter)
+{
   boolean running;
-  long current_position ;
+  long current_position;
   long target_position;
+  uint8_t report_message[64];
 
-  if (devices.ok_to_run_motors) {
-
-    for ( int i = 0; i < devices.steppers_index; i++) {
-      if (devices.stepper_run_modes[i] == STEPPER_STOP) {
-        continue;
-      }
-      else {
-        devices.steppers[i]->enableOutputs();
-        switch (devices.stepper_run_modes[i]) {
+  while (1)
+  {
+    if (devices.ok_to_run_motors)
+    {
+      for (int i = 0; i < devices.steppers_index; i++)
+      {
+        if (devices.stepper_run_modes[i] == STEPPER_STOP)
+        {
+          continue;
+        }
+        else
+        {
+          devices.steppers[i]->enableOutputs();
+          switch (devices.stepper_run_modes[i])
+          {
           case STEPPER_RUN:
             devices.steppers[i]->run();
             running = devices.steppers[i]->isRunning();
-            if (!running) {
-              byte report_message[3] = {2, STEPPER_RUN_COMPLETE_REPORT, (byte)i};
-              client.write(report_message, 3);
+            if (!running)
+            {
+              memset(report_message, 0, sizeof(report_message));
+              report_message[0] = 2;
+              report_message[1] = STEPPER_RUN_COMPLETE_REPORT;
+              report_message[2] = (uint8_t)i;
+
+              if (xQueueSend(report_q, (const void *)report_message, 20) != pdTRUE)
+              {
+                rtos_fatal_error_report((char *)"Send reqport_q for stepper run complete failed");
+              }
               devices.stepper_run_modes[i] = STEPPER_STOP;
             }
             break;
@@ -1669,92 +1883,232 @@ void run_steppers() {
           case STEPPER_RUN_SPEED_TO_POSITION:
             running = devices.steppers[i]->runSpeedToPosition();
             target_position = devices.steppers[i]->targetPosition();
-            if (target_position == devices.steppers[i]->currentPosition()) {
-              byte report_message[3] = {2, STEPPER_RUN_COMPLETE_REPORT, (byte)i};
-              client.write(report_message, 3);
+            if (target_position == devices.steppers[i]->currentPosition())
+            {
+              memset(report_message, 0, sizeof(report_message));
+
+              uint8_t report_message[3] = {2, STEPPER_RUN_COMPLETE_REPORT, (uint8_t)i};
+              report_message[0] = 2;
+              report_message[1] = STEPPER_RUN_COMPLETE_REPORT;
+              report_message[2] = (uint8_t)i;
+
+              if (xQueueSend(report_q, (const void *)report_message, 20) != pdTRUE)
+              {
+                rtos_fatal_error_report((char *)"Send reqport_q for stepper run complete failed");
+              }
               devices.stepper_run_modes[i] = STEPPER_STOP;
             }
             break;
           default:
+            vTaskDelay(1 / portTICK_PERIOD_MS);
             break;
-        }
-      }
-    }
-  }
-}
-
-
-void setup()
-{
-  Serial.begin(115200);
-  delay(1000);
-  // Set WiFi to station mode and disconnect from an AP if it was previously connected
-  WiFi.mode(WIFI_STA);
-  WiFi.disconnect();
-  WiFi.begin(ssid, password);
-  // delay(100);
-
-  pinMode(LED_BUILTIN, OUTPUT);
-
-  // turn on LED
-  digitalWrite(LED_BUILTIN, HIGH);
-
-  Serial.println("\nAllow 15 seconds for connection to complete..");
-
-  while (WiFi.status() != WL_CONNECTED)
-  {
-    delay(1000);
-    Serial.print(".");
-  }
-
-  Serial.println();
-
-  Serial.print("Connected to WiFi. IP Address: ");
-  Serial.print(WiFi.localIP());
-
-  Serial.print("  IP Port: ");
-  Serial.println(PORT);
-  Serial.println();
-
-  digitalWrite(LED_BUILTIN, LOW);
-  init_pin_structures();
-  can_scan = true;
-  wifiServer.begin();
-}
-
-void loop()
-{
-  client = wifiServer.available();
-
-  if (client)
-  {
-    Serial.print("Client Connected to address: ");
-    Serial.println(client.remoteIP());
-
-    while (client.connected())
-    {
-      // if (client.available())
-      {
-        delay(1);
-        {
-          // keep processing incoming commands
-          get_next_command();
-
-          if (!stop_reports)
-          { // stop reporting
-            if (can_scan) {
-              scan_digital_inputs();
-              scan_analog_inputs();
-              scan_sonars();
-              scan_dhts();
-              scan_touch();
-              run_steppers();
-            }
           }
         }
       }
     }
-    client.stop();
-    Serial.println("Client disconnected");
+    vTaskDelay(1 / portTICK_PERIOD_MS);
   }
+}
+
+// print the error and then blink board led forever
+void rtos_fatal_error_report(char *report)
+{
+  Serial.println(report);
+  while (1)
+  {
+    digitalWrite(BUILTIN_LED, LOW);
+    vTaskDelay(1000 / portTICK_PERIOD_MS);
+    digitalWrite(BUILTIN_LED, HIGH);
+    vTaskDelay(1000 / portTICK_PERIOD_MS);
+  }
+}
+
+// rtos tasks
+void get_next_command(void *parameter)
+{
+  command_descriptor command_entry;
+  uint8_t command, length;
+
+  memset(command_buffer, 0, sizeof(command_buffer));
+
+  // get the next entry on commmand_q
+  while (1)
+  {
+    if (deviceConnected == true)
+    {
+      if (xQueueReceive(command_q, command_buffer, 10) == pdTRUE)
+      {
+        Serial.println("Before");
+        //dump_buffer(command_buffer, 32);
+        length = command_buffer[0];
+        command = command_buffer[1];
+
+
+        if (length > 1)
+        {
+          for (int i = 0; i < length - 1; i++)
+          {
+            command_buffer[i] = command_buffer[i + 2];
+          }
+        }
+        // Serial.println("after");
+
+        //dump_buffer(command_buffer, 32);
+
+        // get function pointer to command
+        command_entry = command_table[command];
+
+        //  execute the command
+        command_entry.command_func();
+      }
+    }
+    else
+    {
+      vTaskDelay(1 / portTICK_PERIOD_MS);
+    }
+    memset(command_buffer, 0, sizeof(command_buffer));
+  }
+}
+
+void send_report(void *parameter)
+{
+  while (1)
+  {
+    if (deviceConnected)
+    {
+
+      // byte bx[] = {1, 2, 3, 4, 0, 0, 0};
+      uint8_t xreport_buffer[64];
+      memset(xreport_buffer, 0, sizeof(xreport_buffer));
+
+      if (xQueueReceive(report_q, xreport_buffer, 10) == pdTRUE)
+      {
+
+        client.write(xreport_buffer, xreport_buffer[0] + 1);
+
+        vTaskDelay(1 / portTICK_PERIOD_MS);
+      }
+      else
+      {
+        vTaskDelay(1 / portTICK_PERIOD_MS);
+      }
+    }
+
+    else
+    {
+      vTaskDelay(1 / portTICK_PERIOD_MS);
+    }
+  }
+}
+
+void retrieve_data_from_network(void *parameters)
+{
+  memset(command_buffer, 0, sizeof(command_buffer));
+  byte packet_length;
+
+  while (1)
+  {
+    client = wifiServer.available();
+
+    if (client)
+    {
+      Serial.print("Client Connected to address: ");
+      Serial.println(client.remoteIP());
+
+      while (client.connected())
+      {
+        if (not client.available())
+        {
+          vTaskDelay(1 / portTICK_PERIOD_MS);
+          continue;
+        }
+        // get the packet length
+        packet_length = (byte)client.read();
+
+        command_buffer[0] = packet_length;
+        for (int i = 1; i <= packet_length; i++)
+        {
+          // need this delay or data read is not correct
+          while (not client.available())
+          {
+            vTaskDelay(1 / portTICK_PERIOD_MS);
+          }
+          command_buffer[i] = (byte)client.read();
+        }
+
+        //dump_buffer(command_q_buffer, 32);
+
+        if (xQueueSend(command_q_buffer, (const void *)command_buffer, 2000) != pdTRUE)
+        {
+          rtos_fatal_error_report((char *)"Send on command_q failed");
+        }
+        memset(command_buffer, 0, sizeof(command_buffer));
+      }
+    }
+  }
+}
+
+void myTimerCallback(TimerHandle_t xTimer)
+{
+  Serial.println("Could not connect - resetting the device");
+  reset_data();
+}
+
+void setup()
+{
+    Serial.begin(115200);
+
+    // Set WiFi to station mode and disconnect from an AP if it was previously connected
+    WiFi.mode(WIFI_STA);
+    WiFi.disconnect();
+    WiFi.begin(ssid, password);
+    delay(100);
+
+    pinMode(LED_BUILTIN, OUTPUT);
+
+    // turn on LED
+    digitalWrite(LED_BUILTIN, HIGH);
+
+    Serial.println("\nAllow 15 seconds for connection to complete..");
+
+    while (WiFi.status() != WL_CONNECTED)
+    {
+        delay(1000);
+        Serial.print(".");
+    }
+
+    Serial.println();
+
+    Serial.print("Connected to WiFi. IP Address: ");
+    Serial.print(WiFi.localIP());
+
+    Serial.print("  IP Port: ");
+    Serial.println(PORT);
+    Serial.println();
+
+    digitalWrite(LED_BUILTIN, LOW);
+    wifiServer.begin();
+    delay(1000);
+
+
+
+  can_scan = true;
+  xTaskCreatePinnedToCore(retrieve_data_from_network, "retrieve_data_from_network", 2048, NULL, 2, NULL, app_cpu);
+  xTaskCreatePinnedToCore(get_next_command, "get next command", 2048, NULL, 5, NULL, app_cpu);
+  xTaskCreatePinnedToCore(send_report, "send report", 2048, NULL, 2, NULL, app_cpu);
+  xTaskCreatePinnedToCore(scan_digital_inputs, "scan_digital_inputs", 2048, NULL, 2, NULL, app_cpu);
+  xTaskCreatePinnedToCore(scan_analog_inputs, "scan_analog_inputs", 2048, NULL, 2, NULL, app_cpu);
+  xTaskCreatePinnedToCore(scan_touch, "scan_touch", 2048, NULL, 4, NULL, app_cpu);
+  xTaskCreatePinnedToCore(scan_sonars, "scan_sonars", 2048, NULL, 2, NULL, app_cpu);
+  xTaskCreatePinnedToCore(scan_dhts, "scan_dhts", 2048, NULL, 5, NULL, app_cpu);
+  xTaskCreatePinnedToCore(run_steppers, "run_steppers", 2048, NULL, 2, NULL, app_cpu);
+
+  delay(1000);
+
+  vTaskDelete(NULL);
+}
+
+void loop()
+{
+  // Nothing to do here
 }
