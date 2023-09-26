@@ -246,15 +246,8 @@ extern void send_report();
 #define STEPPER_GET_DISTANCE_TO_GO 55
 #define STEPPER_GET_TARGET_POSITION 56
 
-// FreeRTOS elements
-// Data coming in from the transport is placed on this queue.
-QueueHandle_t command_q;
 
-// Report queue
-QueueHandle_t report_q;
 
-// task handle
-TaskHandle_t xHandle;
 
 // When adding a new command update the command_table.
 // The command length is the number of bytes that follow
@@ -343,6 +336,20 @@ command_descriptor command_table[] =
 #define MAX_COMMAND_LENGTH 32
 
 #define MAX_REPORT_LENGTH 64
+
+// FreeRTOS elements
+// Data coming in from the transport is placed on this queue.
+QueueHandle_t command_q = xQueueCreate( 32, MAX_COMMAND_LENGTH );
+
+// Report queue
+QueueHandle_t report_q = xQueueCreate( 64, MAX_REPORT_LENGTH );
+
+// task handle
+TaskHandle_t xHandle;
+
+
+// buffer to hold data pulled off of the command queue
+uint8_t command_buffer[MAX_COMMAND_LENGTH];
 
 // Pin mode definitions
 
@@ -471,11 +478,6 @@ struct DHT
   DHTNEW *dht_sensor;
 };
 
-// buffer to hold incoming command data from the BLE interface
-QueueHandle_t command_q_buffer[MAX_COMMAND_LENGTH];
-
-// buffer to hold data pulled off of the command queue
-uint8_t command_buffer[MAX_COMMAND_LENGTH];
 
 /* OneWire Object*/
 
@@ -2038,7 +2040,7 @@ void retrieve_data_from_network(void *parameters)
 
         //dump_buffer(command_q_buffer, 32);
 
-        if (xQueueSend(command_q_buffer, (const void *)command_buffer, 2000) != pdTRUE)
+        if (xQueueSend(command_q, (const void *)command_buffer, 2000) != pdTRUE)
         {
           rtos_fatal_error_report((char *)"Send on command_q failed");
         }
@@ -2087,6 +2089,7 @@ void setup()
     Serial.println();
 
     digitalWrite(LED_BUILTIN, LOW);
+    deviceConnected = true;
     wifiServer.begin();
     delay(1000);
 
