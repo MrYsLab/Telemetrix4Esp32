@@ -1,6 +1,6 @@
 /*
 
-  Copyright (c) 2022 Alan Yorinks All rights reserved.
+  Copyright (c) 2023 Alan Yorinks All rights reserved.
 
   This program is free software; you can redistribute it and/or
   modify it under the terms of the GNU AFFERO GENERAL PUBLIC LICENSE
@@ -1162,7 +1162,11 @@ void stepper_set_speed() {
   // motor_id = command_buffer[0]
   // speed_msb = command_buffer[1]
   // speed_lsb = command_buffer[2]
+  // polarity = command_buffer[3]
   float speed = (float) ((command_buffer[1] << 8) + command_buffer[2]);
+  if (command_buffer[3] == 1){
+      speed = speed * -1.0;
+  }
   devices.steppers[command_buffer[0]]->setSpeed(speed);
 }
 

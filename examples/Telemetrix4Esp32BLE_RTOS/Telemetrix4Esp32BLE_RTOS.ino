@@ -1,6 +1,6 @@
 /*
 
-  Copyright (c) 2022 Alan Yorinks All rights reserved.
+  Copyright (c) 2023 Alan Yorinks All rights reserved.
 
   This program is free software; you can redistribute it and/or
   modify it under the terms of the GNU AFFERO GENERAL PUBLIC LICENSE
@@ -34,6 +34,16 @@
 #include <SPI.h>
 #include <OneWire.h>
 #include <AccelStepper.h>
+
+
+#if CONFIG_FREERTOS_UNICORE
+static const BaseType_t app_cpu = 0;
+#else
+static const BaseType_t app_cpu = 1;
+#endif
+
+static TimerHandle_t wifi_connection_timer = NULL;
+#define CONNECTION_TIMEOUT_PERIOD 10000  // 10 seconds
 
 // We define the following functions as extern
 // to provide for forward referencing.
@@ -159,7 +169,13 @@ extern void stepper_set_enable_pin();
 
 extern void stepper_is_running();
 
-extern void send_debug_info(byte id, int value);
+extern void send_debug_info(uint8_t id, int value);
+
+extern void rtos_fatal_error_report(char *report);
+
+extern void get_next_command();
+
+extern void send_report();
 
 // Commands -received by this sketch
 // Add commands retaining the sequential numbering.
@@ -168,7 +184,7 @@ extern void send_debug_info(byte id, int value);
 #define SET_PIN_MODE 1
 #define DIGITAL_WRITE 2
 #define ANALOG_WRITE 3
-#define MODIFY_REPORTING 4 // mode(all, analog, or digital), pin, enable or disable
+#define MODIFY_REPORTING 4  // mode(all, analog, or digital), pin, enable or disable
 #define GET_FIRMWARE_VERSION 5
 #define SERVO_ATTACH 6
 #define SERVO_WRITE 7
@@ -222,82 +238,6 @@ extern void send_debug_info(byte id, int value);
 #define STEPPER_GET_DISTANCE_TO_GO 55
 #define STEPPER_GET_TARGET_POSITION 56
 
-// When adding a new command update the command_table.
-// The command length is the number of bytes that follow
-// the command byte itself, and does not include the command
-// byte in its length.
-// The command_func is a pointer the command's function.
-struct command_descriptor
-{
-  // a pointer to the command processing function
-  void (*command_func)(void);
-};
-
-// The following table is an array of pointers to the command functions
-
-// Make sure to keep things in the proper order - command
-// defines are indices into this table.
-command_descriptor command_table[] =
-{
-  {&serial_loopback},
-  {&set_pin_mode},
-  {&digital_write},
-  {&analog_write},
-  {&modify_reporting},
-  {&get_firmware_version},
-  {&servo_attach},
-  {&servo_write},
-  {&servo_detach},
-  {&i2c_begin},
-  {&i2c_read},
-  {&i2c_write},
-  {&sonar_new},
-  {&dht_new},
-  {&stop_all_reports},
-  {&set_analog_scanning_interval},
-  {&enable_all_reports},
-  {&analog_out_attach},
-  {&analog_out_detach},
-  {&dac_write},
-  {&reset_data},
-  {&dac_disable},
-  {&init_spi},
-  {&write_blocking_spi},
-  {&read_blocking_spi},
-  {&set_format_spi},
-  {&spi_cs_control},
-  {&onewire_init},
-  {&onewire_reset},
-  {&onewire_select},
-  {&onewire_skip},
-  {&onewire_write},
-  {&onewire_read},
-  {&onewire_reset_search},
-  {&onewire_search},
-  {&onewire_crc8},
-  {&set_pin_mode_stepper},
-  {&stepper_move_to},
-  {&stepper_move},
-  {&stepper_run},
-  {&stepper_run_speed},
-  {&stepper_set_max_speed},
-  {&stepper_set_acceleration},
-  {&stepper_set_speed},
-  (&stepper_set_current_position),
-  (&stepper_run_speed_to_position),
-  (&stepper_stop),
-  (&stepper_disable_outputs),
-  (&stepper_enable_outputs),
-  (&stepper_set_minimum_pulse_width),
-  (&stepper_set_enable_pin),
-  (&stepper_set_3_pins_inverted),
-  (&stepper_set_4_pins_inverted),
-  (&stepper_is_running),
-  (&stepper_get_current_position),
-  {&stepper_get_distance_to_go},
-  (&stepper_get_target_position),
-};
-
 // Input pin reporting control sub commands (modify_reporting)
 #define REPORTING_DISABLE_ALL 0
 #define REPORTING_ANALOG_ENABLE 1
@@ -305,8 +245,9 @@ command_descriptor command_table[] =
 #define REPORTING_ANALOG_DISABLE 3
 #define REPORTING_DIGITAL_DISABLE 4
 
-// maximum length of a command in bytes
-#define MAX_COMMAND_LENGTH 30
+// maximum length of a command and reports in bytes
+#define MAX_COMMAND_LENGTH 32
+#define MAX_REPORT_LENGTH 64
 
 // Pin mode definitions
 
@@ -351,53 +292,141 @@ command_descriptor command_table[] =
 #define DHT_READ_ERROR 1
 
 // firmware version - update this when bumping the version
-#define FIRMWARE_MAJOR 2
+#define FIRMWARE_MAJOR 1
 #define FIRMWARE_MINOR 0
-#define FIRMWARE_BUILD 0
+#define FIRMWARE_BUILD 2
 
-// A buffer to hold i2c report data
-byte i2c_report_message[64];
+// BLE Specific defines
+// See the following for generating UUIDs:
+// https://www.uuidgenerator.net/
+#define SERVICE_UUID "6E400001-B5A3-F393-E0A9-E50E24DCCA9E"  // UART service UUID
+#define CHARACTERISTIC_UUID_RX "6E400002-B5A3-F393-E0A9-E50E24DCCA9E"
+#define CHARACTERISTIC_UUID_TX "6E400003-B5A3-F393-E0A9-E50E24DCCA9E"
 
-// a buffer to hold spi reports
-byte spi_report_message[64];
+// When adding a new command update the command_table.
+// The command length is the number of bytes that follow
+// the command byte itself, and does not include the command
+// byte in its length.
+// The command_func is a pointer the command's function.
+struct command_descriptor {
+  // a pointer to the command processing function
+  void (*command_func)(void);
+};
+
+// The following table is an array of pointers to the command functions
+
+// Make sure to keep things in the proper order - command
+// defines are indices into this table.
+command_descriptor command_table[] = {
+  { &serial_loopback },
+  { &set_pin_mode },
+  { &digital_write },
+  { &analog_write },
+  { &modify_reporting },
+  { &get_firmware_version },
+  { &servo_attach },
+  { &servo_write },
+  { &servo_detach },
+  { &i2c_begin },
+  { &i2c_read },
+  { &i2c_write },
+  { &sonar_new },
+  { &dht_new },
+  { &stop_all_reports },
+  { &set_analog_scanning_interval },
+  { &enable_all_reports },
+  { &analog_out_attach },
+  { &analog_out_detach },
+  { &dac_write },
+  { &reset_data },
+  { &dac_disable },
+  { &init_spi },
+  { &write_blocking_spi },
+  { &read_blocking_spi },
+  { &set_format_spi },
+  { &spi_cs_control },
+  { &onewire_init },
+  { &onewire_reset },
+  { &onewire_select },
+  { &onewire_skip },
+  { &onewire_write },
+  { &onewire_read },
+  { &onewire_reset_search },
+  { &onewire_search },
+  { &onewire_crc8 },
+  { &set_pin_mode_stepper },
+  { &stepper_move_to },
+  { &stepper_move },
+  { &stepper_run },
+  { &stepper_run_speed },
+  { &stepper_set_max_speed },
+  { &stepper_set_acceleration },
+  { &stepper_set_speed },
+  (&stepper_set_current_position),
+  (&stepper_run_speed_to_position),
+  (&stepper_stop),
+  (&stepper_disable_outputs),
+  (&stepper_enable_outputs),
+  (&stepper_set_minimum_pulse_width),
+  (&stepper_set_enable_pin),
+  (&stepper_set_3_pins_inverted),
+  (&stepper_set_4_pins_inverted),
+  (&stepper_is_running),
+  (&stepper_get_current_position),
+  { &stepper_get_distance_to_go },
+  (&stepper_get_target_position),
+};
+
+// FreeRTOS elements
+// Data coming in from the transport is placed on this queue.
+QueueHandle_t command_q = xQueueCreate(32, MAX_COMMAND_LENGTH);
+
+// Report queue
+QueueHandle_t report_q = xQueueCreate(64, MAX_REPORT_LENGTH);
+
+// buffer to hold data pulled off of the command queue
+uint8_t command_buffer[MAX_COMMAND_LENGTH];
+
+// Scanning intervals
+
+// analog scanning time management
+uint8_t analog_sampling_interval = 19;
+// touch pin scanning time management
+uint8_t touch_sampling_interval = 19;
+// sonar scanning time management
+uint8_t sonar_scan_interval = 33;  // Milliseconds between sensor pings
+// dht scanning time management
+unsigned int dht_scan_interval = 2200;  // scan dht's every 2.2 seconds
 
 // a flag to stop sending all report messages
 bool stop_reports = false;
 
 // a descriptor for digital pins
-struct pin_descriptor
-{
-  byte pin_number;
-  byte pin_mode;
-  bool reporting_enabled; // If true, then send reports if an input pin
-  int last_value;         // Last value read for input mode
+struct pin_descriptor {
+  uint8_t pin_number;
+  uint8_t pin_mode;
+  bool reporting_enabled;  // If true, then send reports if an input pin
+  int last_value;          // Last value read for input mode
 };
 
 // an array of digital_pin_descriptors
 pin_descriptor the_digital_pins[MAX_PINS_SUPPORTED];
 
 // a descriptor for digital pins
-struct analog_pin_descriptor
-{
-  byte pin_number;
-  byte pin_mode;
-  bool reporting_enabled; // If true, then send reports if an input pin
-  int last_value;         // Last value read for input mode
-  int differential;       // difference between current and last value needed
-  // to generate a report
+struct analog_pin_descriptor {
+  uint8_t pin_number;
+  uint8_t pin_mode;
+  bool reporting_enabled;  // If true, then send reports if an input pin
+  int last_value;          // Last value read for input mode
+  int differential;        // difference between current and last value needed
+                           // to generate a report
 };
-
-// analog scanning time management
-unsigned long current_millis;
-unsigned long previous_millis;
-uint8_t analog_sampling_interval = 19;
 
 // an array of analog_pin_descriptors
 analog_pin_descriptor the_analog_pins[MAX_PINS_SUPPORTED];
 
-struct touch_pin_descriptor
-{
-  byte pin_number;
+struct touch_pin_descriptor {
+  uint8_t pin_number;
   bool reporting_enabled;
   int last_value;
   int differential;
@@ -406,55 +435,33 @@ struct touch_pin_descriptor
 // an array of touch_pin descriptors
 touch_pin_descriptor the_touch_pins[MAX_PINS_SUPPORTED];
 
-// touch pin scanning time management
-unsigned long touch_current_millis;  // for touch input loop
-unsigned long touch_previous_millis; // for touch input loop
-uint8_t touch_sampling_interval = 19;
-
 // servo management
 Servo servos[MAX_SERVOS];
 
 // this array allows us to retrieve the servo object
 // associated with a specific pin number
-byte pin_to_servo_index_map[MAX_SERVOS];
+uint8_t pin_to_servo_index_map[MAX_SERVOS];
 
 // HC-SR04 Sonar Management
 #define MAX_SONARS 6
 
-struct Sonar
-{
+struct Sonar {
   uint8_t trigger_pin;
   unsigned int last_value;
   Ultrasonic *usonic;
 };
 
-// sonar scanning time management
-unsigned long sonar_current_millis;  // for analog input loop
-unsigned long sonar_previous_millis; // for analog input loop
-uint8_t sonar_scan_interval = 33;    // Milliseconds between sensor pings
-// (29ms is about the min to avoid = 19;
-
 // DHT Management
-#define MAX_DHTS 6                // max number of devices
-#define READ_FAILED_IN_SCANNER 0  // read request failed when scanning
-#define READ_IN_FAILED_IN_SETUP 1 // read request failed when initially setting up
+#define MAX_DHTS 6                 // max number of devices
+#define READ_FAILED_IN_SCANNER 0   // read request failed when scanning
+#define READ_IN_FAILED_IN_SETUP 1  // read request failed when initially setting up
 
-struct DHT
-{
+struct DHT {
   uint8_t pin;
   unsigned int last_value;
   DHTNEW *dht_sensor;
 };
 
-// dht scanning time management
-unsigned long dht_current_millis;      // for analog input loop
-unsigned long dht_previous_millis;     // for analog input loop
-unsigned int dht_scan_interval = 2200; // scan dht's every 2.2 seconds
-
-// buffer to hold incoming command data
-
-// buffer to hold incoming command data
-byte command_buffer[MAX_COMMAND_LENGTH];
 
 /* OneWire Object*/
 
@@ -466,50 +473,49 @@ OneWire *ow = NULL;
 // A class to store device objects
 
 class Devices {
-  public:
-    // stepper device storage and management
-    AccelStepper *steppers[MAX_NUMBER_OF_STEPPERS];
-    uint8_t stepper_run_modes[MAX_NUMBER_OF_STEPPERS];
-    bool ok_to_run_motors = false;
+public:
+  // stepper device storage and management
+  AccelStepper *steppers[MAX_NUMBER_OF_STEPPERS];
+  uint8_t stepper_run_modes[MAX_NUMBER_OF_STEPPERS];
+  bool ok_to_run_motors = false;
 
-    // DHT device storage
-    DHT dhts[MAX_DHTS];
+  // DHT device storage
+  DHT dhts[MAX_DHTS];
 
-    // sonar device storage
-    Sonar sonars[MAX_SONARS];
+  // sonar device storage
+  Sonar sonars[MAX_SONARS];
 
-    // stepper variables
-    int steppers_index = 0;
+  // stepper variables
+  int steppers_index = 0;
 
-    // dht variables
-    byte dht_index = 0; // index into dht struct
+  // dht variables
+  uint8_t dht_index = 0;  // index into dht struct
 
-    // sonar variables
-    byte sonars_index = 0; // index into sonars struct
-    byte last_sonar_visited = 0;
+  // sonar variables
+  uint8_t sonars_index = 0;  // index into sonars struct
+  uint8_t last_sonar_visited = 0;
 
-    // methods to devices
-    void add_a_stepper(int interface, uint8_t pin1, uint8_t pin2,
-                       uint8_t pin3, uint8_t pin4, bool enable) {
+  // methods to devices
+  void add_a_stepper(int interface, uint8_t pin1, uint8_t pin2,
+                     uint8_t pin3, uint8_t pin4, bool enable) {
 
-
-      if (this->steppers_index < MAX_NUMBER_OF_STEPPERS) {
-        this->steppers[this->steppers_index] = new AccelStepper(interface,
-            pin1, pin2, pin3, pin4, enable);
-        this->steppers_index++;
-      }
+    if (this->steppers_index < MAX_NUMBER_OF_STEPPERS) {
+      this->steppers[this->steppers_index] = new AccelStepper(interface,
+                                                              pin1, pin2, pin3, pin4, enable);
+      this->steppers_index++;
     }
+  }
 
-    void add_a_dht(uint8_t pin) {
-      this->dhts[this->dht_index].dht_sensor = new DHTNEW(pin);
-      this->dhts[this->dht_index].pin = pin;
-    }
+  void add_a_dht(uint8_t pin) {
+    this->dhts[this->dht_index].dht_sensor = new DHTNEW(pin);
+    this->dhts[this->dht_index].pin = pin;
+  }
 
-    void add_sonar(uint8_t trigger_pin, uint8_t echo_pin) {
-      this->sonars[this->sonars_index].usonic = new Ultrasonic(trigger_pin, echo_pin, 80000UL);
-      this->sonars[this->sonars_index].trigger_pin = trigger_pin;
-      this->sonars_index++;
-    }
+  void add_sonar(uint8_t trigger_pin, uint8_t echo_pin) {
+    this->sonars[this->sonars_index].usonic = new Ultrasonic(trigger_pin, echo_pin, 80000UL);
+    this->sonars[this->sonars_index].trigger_pin = trigger_pin;
+    this->sonars_index++;
+  }
 };
 
 // Instantiate the devices class
@@ -520,105 +526,131 @@ bool can_scan = false;
 
 /*********  BLE SPECIFICS ********************/
 BLEServer *pServer = NULL;
-BLECharacteristic * pTxCharacteristic;
+BLECharacteristic *pTxCharacteristic;
 bool deviceConnected = false;
-bool oldDeviceConnected = false;
-
-// See the following for generating UUIDs:
-// https://www.uuidgenerator.net/
-
-#define SERVICE_UUID           "6E400001-B5A3-F393-E0A9-E50E24DCCA9E" // UART service UUID
-#define CHARACTERISTIC_UUID_RX "6E400002-B5A3-F393-E0A9-E50E24DCCA9E"
-#define CHARACTERISTIC_UUID_TX "6E400003-B5A3-F393-E0A9-E50E24DCCA9E"
 
 
-class MyServerCallbacks: public BLEServerCallbacks {
-    void onConnect(BLEServer* pServer) {
-      deviceConnected = true;
-      digitalWrite(BUILTIN_LED, LOW);
-      can_scan = true;
-    };
 
-    void onDisconnect(BLEServer* pServer) {
-      deviceConnected = false;
-      digitalWrite(BUILTIN_LED, HIGH);
-    }
+
+class MyServerCallbacks : public BLEServerCallbacks {
+  void onConnect(BLEServer *pServer) {
+    deviceConnected = true;
+    digitalWrite(BUILTIN_LED, LOW);
+    can_scan = true;
+  };
+
+  void onDisconnect(BLEServer *pServer) {
+    deviceConnected = false;
+    digitalWrite(BUILTIN_LED, HIGH);
+  }
 };
 
-class MyCallbacks: public BLECharacteristicCallbacks {
-    void onWrite(BLECharacteristic *pCharacteristic) {
-      command_descriptor command_entry;
-      byte command;
+class MyCallbacks : public BLECharacteristicCallbacks {
 
-      // clear the command buffer
-      memset(command_buffer, 0, sizeof(command_buffer));
 
-      std::string rxValue = pCharacteristic->getValue();
+  void onWrite(BLECharacteristic *pCharacteristic) {
+    //command_descriptor command_entry;
+    //byte command;
 
-      uint8_t *buf;
-      buf = (uint8_t *) rxValue.data();
+    // clear the command buffer
+    memset(command_buffer, 0, sizeof(command_buffer));
 
-      // make sure the packet length is valid for this packet
-      if (rxValue.length() != (buf[0] + 1)) {
-        Serial.println("Invalid packet received");
-        return;
-      }
+    std::string rxValue = pCharacteristic->getValue();
 
-      // get command id
-      command = buf[1];
+    uint8_t *buf;
+    buf = (uint8_t *)rxValue.data();
 
-      // uncomment to see packet length and command id
-      //send_debug_info(buf[0], buf[1]);
-
-      // get function pointer to command
-      command_entry = command_table[command];
-
-      // copy only the payload to the command buffer
-      // the packet length and command id are removed.
-      for (int i = 0; i < rxValue.length() - 2; i++) {
-        command_buffer[i] = buf[i + 2];
-      }
-      // execute the command
-      command_entry.command_func();
+    // make sure the packet length is valid for this packet
+    if (rxValue.length() != (buf[0] + 1)) {
+      Serial.println("Invalid packet received");
+      return;
     }
 
+    // get command id
+    Serial.print("command received: ");
+    Serial.println(buf[1]);
+
+    if (xQueueSend(command_q, (const void *)&buf[1], 2000) != pdTRUE) {
+          rtos_fatal_error_report((char *)"Send on command_q failed");
+    }
+
+    // get command id
+    Serial.print("command received2: ");
+    Serial.println(buf[1]);
+
+    // uncomment to see packet length and command id
+    //send_debug_info(buf[0], buf[1]);
+
+    // get function pointer to command
+    //command_entry = command_table[command];
+
+    // copy only the payload to the command buffer
+    // the packet length and command id are removed.
+    //for (int i = 0; i < rxValue.length() - 2; i++) {
+    //  command_buffer[i] = buf[i + 2];
+    //}
+    // execute the command
+    //command_entry.command_func();
+  }
 };
+
+
+// this is a diagnostic to be called internally to dump the contents
+// of a data buffer
+void dump_buffer(uint8_t *buffer, int len) {
+  Serial.print("start dump buffer: ");
+  for (int i = 0; i < len; i++) {
+    Serial.print(buffer[i]);
+    Serial.print(" ");
+  }
+  Serial.println("end dump buffer");
+}
 
 // command functions
 
-
 // A method to send debug data across the serial link
-void send_debug_info(byte id, int value)
-{
-  byte debug_buffer[5] = {(byte)4, (byte)DEBUG_PRINT, 0, 0, 0};
+void send_debug_info(uint8_t id, int value) {
+
+  uint8_t debug_buffer[64];
+  memset(debug_buffer, 0, sizeof(debug_buffer));
+
+  debug_buffer[0] = 4;
+  debug_buffer[1] = (uint8_t)DEBUG_PRINT;
   debug_buffer[2] = id;
   debug_buffer[3] = highByte(value);
   debug_buffer[4] = lowByte(value);
-  pTxCharacteristic->setValue(debug_buffer, 5);
-  pTxCharacteristic->notify();
+  if (xQueueSend(report_q, (const void *)debug_buffer, 20) != pdTRUE) {
+    rtos_fatal_error_report((char *)"Send reqport_q for send_debug_info failed");
+  }
 }
 
 // command functions
-void serial_loopback()
-{
-  byte loop_back_buffer[3] = {2, (byte)SERIAL_LOOP_BACK, command_buffer[0]};
-  pTxCharacteristic->setValue(loop_back_buffer, 3);
-  pTxCharacteristic->notify();
+void serial_loopback() {
+
+  uint8_t loop_back_buffer[64];
+
+  memset(loop_back_buffer, 0, sizeof(loop_back_buffer));
+
+  loop_back_buffer[0] = 2;
+  loop_back_buffer[1] = (uint8_t)SERIAL_LOOP_BACK;
+  loop_back_buffer[2] = command_buffer[2];
+  if (xQueueSend(report_q, (const void *)loop_back_buffer, 20) != pdTRUE) {
+    rtos_fatal_error_report((char *)"Send reqport_q for serial_loopback failed");
+  }
+  vTaskDelay(14 / portTICK_PERIOD_MS);
 }
 
-void set_pin_mode()
-{
-  byte pin;
-  byte mode;
-  byte resolution;
-  byte channel;
+void set_pin_mode() {
+  uint8_t pin;
+  uint8_t mode;
+  uint8_t resolution;
+  uint8_t channel;
   unsigned int fx;
-  double frequency;
+  double frequency = 0.0;
   pin = command_buffer[0];
   mode = command_buffer[1];
 
-  switch (mode)
-  {
+  switch (mode) {
     case AT_INPUT:
       the_digital_pins[pin].pin_mode = AT_INPUT;
       the_digital_pins[pin].reporting_enabled = command_buffer[2];
@@ -637,8 +669,9 @@ void set_pin_mode()
     case AT_TOUCH:
       the_touch_pins[pin].differential = (command_buffer[2] << 8) + command_buffer[3];
       the_touch_pins[pin].reporting_enabled = command_buffer[4];
+      // Serial.print("TOUCH");
+      // Serial.println(pin);
       break;
-
     case AT_OUTPUT:
       the_digital_pins[pin].pin_mode = mode;
       pinMode(pin, OUTPUT);
@@ -652,11 +685,12 @@ void set_pin_mode()
       // command_buffer[2] = channel
       // command_buffer[3] = resolution
       // command_buffer[4] to command_buffer[11] = frequency
+
       channel = command_buffer[2];
       resolution = command_buffer[3];
 
       memcpy(&frequency, &command_buffer[4], sizeof(double));
-      fx = (unsigned int)frequency;
+
       ledcSetup(channel, frequency, resolution);
       ledcAttachPin(pin, channel);
       break;
@@ -665,34 +699,29 @@ void set_pin_mode()
   }
 }
 
-void analog_out_attach()
-{
+void analog_out_attach() {
   // command_buffer[0] = pin number
   // command_buffer[1] = channel
   ledcAttachPin(command_buffer[0], command_buffer[1]);
 }
 
-void analog_out_detach()
-{
+void analog_out_detach() {
   ledcDetachPin(command_buffer[0]);
 }
 
-void set_analog_scanning_interval()
-{
+void set_analog_scanning_interval() {
   analog_sampling_interval = command_buffer[0];
 }
 
-void digital_write()
-{
-  byte pin;
-  byte value;
-  pin = command_buffer[0];
-  value = command_buffer[1];
+void digital_write() {
+  uint8_t pin;
+  uint8_t value;
+  pin = command_buffer[2];
+  value = command_buffer[3];
   digitalWrite(pin, value);
 }
 
-void analog_write()
-{
+void analog_write() {
   // command_buffer[0] = channel
   // command_buffer[1] = value_msb,
   // command_buffer[2] = value_lsb
@@ -703,56 +732,46 @@ void analog_write()
   ledcWrite(command_buffer[0], value);
 }
 
-void dac_write()
-{
+void dac_write() {
   // command_buffer[0] = pin
   // command_buffer[1] = value
 
   dacWrite(command_buffer[0], command_buffer[1]);
 }
 
-void dac_disable()
-{
+void dac_disable() {
   dacDisable(command_buffer[0]);
 }
 
-void modify_reporting()
-{
+void modify_reporting() {
   int pin = command_buffer[1];
 
-  switch (command_buffer[0])
-  {
+  switch (command_buffer[0]) {
     case REPORTING_DISABLE_ALL:
-      for (int i = 0; i < MAX_PINS_SUPPORTED; i++)
-      {
+      for (int i = 0; i < MAX_PINS_SUPPORTED; i++) {
         the_digital_pins[i].reporting_enabled = false;
       }
-      for (int i = 0; i < MAX_PINS_SUPPORTED; i++)
-      {
+      for (int i = 0; i < MAX_PINS_SUPPORTED; i++) {
         the_analog_pins[i].reporting_enabled = false;
       }
       break;
     case REPORTING_ANALOG_ENABLE:
-      if (the_analog_pins[pin].pin_mode != AT_MODE_NOT_SET)
-      {
+      if (the_analog_pins[pin].pin_mode != AT_MODE_NOT_SET) {
         the_analog_pins[pin].reporting_enabled = true;
       }
       break;
     case REPORTING_ANALOG_DISABLE:
-      if (the_analog_pins[pin].pin_mode != AT_MODE_NOT_SET)
-      {
+      if (the_analog_pins[pin].pin_mode != AT_MODE_NOT_SET) {
         the_analog_pins[pin].reporting_enabled = false;
       }
       break;
     case REPORTING_DIGITAL_ENABLE:
-      if (the_digital_pins[pin].pin_mode != AT_MODE_NOT_SET)
-      {
+      if (the_digital_pins[pin].pin_mode != AT_MODE_NOT_SET) {
         the_digital_pins[pin].reporting_enabled = true;
       }
       break;
     case REPORTING_DIGITAL_DISABLE:
-      if (the_digital_pins[pin].pin_mode != AT_MODE_NOT_SET)
-      {
+      if (the_digital_pins[pin].pin_mode != AT_MODE_NOT_SET) {
         the_digital_pins[pin].reporting_enabled = false;
       }
       break;
@@ -761,13 +780,14 @@ void modify_reporting()
   }
 }
 
-void get_firmware_version()
-{
-  byte report_message[5] = {4, FIRMWARE_REPORT, FIRMWARE_MAJOR, FIRMWARE_MINOR,
-                            FIRMWARE_BUILD
-                           };
-  pTxCharacteristic->setValue(report_message, 5);
-  pTxCharacteristic->notify();
+void get_firmware_version() {
+  uint8_t report_message[64] = { 4, FIRMWARE_REPORT, FIRMWARE_MAJOR, FIRMWARE_MINOR,
+                                 FIRMWARE_BUILD };
+
+  if (xQueueSend(report_q, (const void *)report_message, 20) != pdTRUE) {
+    rtos_fatal_error_report((char *)"Send on report_q failed");
+  }
+  vTaskDelay(1000 / portTICK_PERIOD_MS);
 }
 
 /***************************************************
@@ -776,13 +796,10 @@ void get_firmware_version()
 
 // Find the first servo that is not attached to a pin
 // This is a helper function not called directly via the API
-int find_servo()
-{
+int find_servo() {
   int index = -1;
-  for (int i = 0; i < MAX_SERVOS; i++)
-  {
-    if (servos[i].attached() == false)
-    {
+  for (int i = 0; i < MAX_SERVOS; i++) {
+    if (servos[i].attached() == false) {
       index = i;
       break;
     }
@@ -790,10 +807,9 @@ int find_servo()
   return index;
 }
 
-void servo_attach()
-{
+void servo_attach() {
 
-  byte pin = command_buffer[0];
+  uint8_t pin = command_buffer[0];
   int servo_found = -1;
 
   int minpulse = (command_buffer[1] << 8) + command_buffer[2];
@@ -801,31 +817,30 @@ void servo_attach()
 
   // find the first available open servo
   servo_found = find_servo();
-  if (servo_found != -1)
-  {
+  if (servo_found != -1) {
     pin_to_servo_index_map[servo_found] = pin;
     servos[servo_found].attach(pin, minpulse, maxpulse);
-  }
-  else
-  {
+  } else {
     // no open servos available, send a report back to client
-    byte report_message[2] = {SERVO_UNAVAILABLE, pin};
-    pTxCharacteristic->setValue(report_message, 2);
-    pTxCharacteristic->notify();
+    byte report_message[64];
+    memset(report_message, 0, sizeof(report_message));
+
+    report_message[0] = SERVO_UNAVAILABLE;
+    report_message[1] = pin;
+    if (xQueueSend(report_q, (const void *)report_message, 20) != pdTRUE) {
+      rtos_fatal_error_report((char *)"Send reqport_q for servo_attach failed");
+    }
   }
 }
 
 // set a servo to a given angle
-void servo_write()
-{
-  byte pin = command_buffer[0];
+void servo_write() {
+  uint8_t pin = command_buffer[0];
   int angle = command_buffer[1];
   servos[0].write(angle);
   // find the servo object for the pin
-  for (int i = 0; i < MAX_SERVOS; i++)
-  {
-    if (pin_to_servo_index_map[i] == pin)
-    {
+  for (int i = 0; i < MAX_SERVOS; i++) {
+    if (pin_to_servo_index_map[i] == pin) {
 
       servos[i].write(angle);
       return;
@@ -834,15 +849,12 @@ void servo_write()
 }
 
 // detach a servo and make it available for future use
-void servo_detach()
-{
-  byte pin = command_buffer[0];
+void servo_detach() {
+  uint8_t pin = command_buffer[0];
 
   // find the servo object for the pin
-  for (int i = 0; i < MAX_SERVOS; i++)
-  {
-    if (pin_to_servo_index_map[i] == pin)
-    {
+  for (int i = 0; i < MAX_SERVOS; i++) {
+    if (pin_to_servo_index_map[i] == pin) {
 
       pin_to_servo_index_map[i] = -1;
       servos[i].detach();
@@ -854,13 +866,11 @@ void servo_detach()
    i2c functions
  **********************************/
 
-void i2c_begin()
-{
+void i2c_begin() {
   Wire.begin();
 }
 
-void i2c_read()
-{
+void i2c_read() {
   // data in the incoming message:
   // address, [0]
   // register, [1]
@@ -868,27 +878,37 @@ void i2c_read()
   // stop transmitting flag [3]
 
   int message_size = 0;
-  byte address = command_buffer[0];
-  byte the_register = command_buffer[1];
+  uint8_t address = command_buffer[0];
+  uint8_t the_register = command_buffer[1];
+  uint8_t i2c_report_message[64];
+  memset(i2c_report_message, 0, sizeof(i2c_report_message));
 
   Wire.beginTransmission(address);
-  Wire.write((byte)the_register);
-  Wire.endTransmission(command_buffer[3]);      // default = true
-  Wire.requestFrom(address, command_buffer[2]); // all bytes are returned in requestFrom
+  Wire.write((uint8_t)the_register);
+  Wire.endTransmission(command_buffer[3]);       // default = true
+  Wire.requestFrom(address, command_buffer[2]);  // all bytes are returned in requestFrom
 
   // check to be sure correct number of bytes were returned by slave
-  if (command_buffer[2] < Wire.available())
-  {
-    byte report_message[4] = {3, I2C_TOO_FEW_BYTES_RCVD, 1, address};
-    pTxCharacteristic->setValue(report_message, 4);
-    pTxCharacteristic->notify();
+  if (command_buffer[2] < Wire.available()) {
+
+    i2c_report_message[0] = 3;
+    i2c_report_message[1] = I2C_TOO_FEW_BYTES_RCVD;
+    i2c_report_message[2] = 1;
+    i2c_report_message[3] = address;
+    if (xQueueSend(report_q, (const void *)i2c_report_message, 20) != pdTRUE) {
+      rtos_fatal_error_report((char *)"Send reqport_q i2c_too_few_bytes failed");
+    }
     return;
-  }
-  else if (command_buffer[2] > Wire.available())
-  {
-    byte report_message[4] = {3, I2C_TOO_MANY_BYTES_RCVD, 1, address};
-    pTxCharacteristic->setValue(report_message, 4);
-    pTxCharacteristic->notify();    return;
+  } else if (command_buffer[2] > Wire.available()) {
+
+    i2c_report_message[0] = 3;
+    i2c_report_message[1] = I2C_TOO_MANY_BYTES_RCVD;
+    i2c_report_message[2] = 1;
+    i2c_report_message[3] = address;
+    if (xQueueSend(report_q, (const void *)i2c_report_message, 20) != pdTRUE) {
+      rtos_fatal_error_report((char *)"Send reqport_q i2c_too_many_bytes failed");
+    }
+    return;
   }
 
   // packet length
@@ -898,7 +918,7 @@ void i2c_read()
   i2c_report_message[1] = I2C_READ_REPORT;
 
   // number of bytes read
-  i2c_report_message[2] = command_buffer[2]; // number of bytes
+  i2c_report_message[2] = command_buffer[2];  // number of bytes
 
   // device address
   i2c_report_message[3] = address;
@@ -907,21 +927,16 @@ void i2c_read()
   i2c_report_message[4] = the_register;
 
   // append the data that was read
-  for (message_size = 0; message_size < command_buffer[2] && Wire.available(); message_size++)
-  {
+  for (message_size = 0; message_size < command_buffer[2] && Wire.available(); message_size++) {
     i2c_report_message[5 + message_size] = Wire.read();
   }
   // send slave address, register and received bytes
-
-  for (int i = 0; i < message_size + 5; i++)
-  {
-    pTxCharacteristic->setValue(i2c_report_message, message_size + 5);
-    pTxCharacteristic->notify();
+  if (xQueueSend(report_q, (const void *)i2c_report_message, 20) != pdTRUE) {
+    rtos_fatal_error_report((char *)"Send reqport_q i2c_read failed");
   }
 }
 
-void i2c_write()
-{
+void i2c_write() {
   // command_buffer[0] is the number of bytes to send
   // command_buffer[1] is the device address
   // additional bytes to write= command_buffer[3..];
@@ -929,20 +944,22 @@ void i2c_write()
   Wire.beginTransmission(command_buffer[1]);
 
   // write the data to the device
-  for (int i = 0; i < command_buffer[0]; i++)
-  {
+  for (int i = 0; i < command_buffer[0]; i++) {
     Wire.write(command_buffer[i + 2]);
   }
   Wire.endTransmission();
-  delayMicroseconds(70);
+
+  vTaskDelay(1 / portTICK_PERIOD_MS);
+
+
+  //delayMicroseconds(70);
 }
 
 /***********************************
    HC-SR04 adding a new device
  **********************************/
 
-void sonar_new()
-{
+void sonar_new() {
   // command_buffer[0] = trigger pin,  command_buffer[1] = echo pin
   devices.add_sonar((uint8_t)command_buffer[0], (uint8_t)command_buffer[1]);
 }
@@ -951,36 +968,40 @@ void sonar_new()
    DHT adding a new device
  **********************************/
 
-void dht_new()
-{
+void dht_new() {
   int d_read;
   // report consists of:
-  // 0 - byte count
+  // 0 - uint8_t count
   // 1 - report type
   // 2 - dht report subtype
   // 3 - pin number
   // 4 - error value
 
   // pre-build an error report in case of a read error
-  byte report_message[5] = {4, (byte)DHT_REPORT, (byte)DHT_READ_ERROR, (byte)0, (byte)0};
+  uint8_t report_message[64];
+  memset(report_message, 0, sizeof(report_message));
+  report_message[0] = 4;
+  report_message[1] = (uint8_t)DHT_REPORT;
+  report_message[2] = (uint8_t)DHT_READ_ERROR;
 
   devices.add_a_dht((uint8_t)command_buffer[0]);
+
   d_read = devices.dhts[devices.dht_index].dht_sensor->read();
 
   // if read return == zero it means no errors.
-  if (d_read == 0)
-  {
+  if (d_read == 0) {
     devices.dht_index++;
-  }
-  else
-  {
+
+  } else {
     // error found
     // send report and release the dht object
 
-    report_message[3] = command_buffer[0]; // pin number
+
+    report_message[3] = command_buffer[0];  // pin number
     report_message[4] = d_read;
-    pTxCharacteristic->setValue(report_message, 5);
-    pTxCharacteristic->notify();
+    if (xQueueSend(report_q, (const void *)report_message, 20) != pdTRUE) {
+      rtos_fatal_error_report((char *)"Send reqport_q for DHT_READ_ERROR error failed");
+    }
     delete (devices.dhts[devices.dht_index].dht_sensor);
   }
 }
@@ -990,8 +1011,8 @@ void init_spi() {
 
   int cs_pin;
 
-  //Serial.print(command_buffer[1]);
-  // initialize chip select GPIO pins
+  // Serial.print(command_buffer[1]);
+  //  initialize chip select GPIO pins
   for (int i = 0; i < command_buffer[0]; i++) {
     cs_pin = command_buffer[1 + i];
     // Chip select is active-low, so we'll initialise it to a driven-high state
@@ -1006,12 +1027,15 @@ void write_blocking_spi() {
   int num_bytes = command_buffer[0];
 
   for (int i = 0; i < num_bytes; i++) {
-    SPI.transfer(command_buffer[1 + i] );
+    SPI.transfer(command_buffer[1 + i]);
   }
 }
 
 // read a number of bytes from the SPI device
 void read_blocking_spi() {
+  uint8_t spi_report_message[64];
+  memset(spi_report_message, 0, sizeof(spi_report_message));
+
   // command_buffer[0] == number of bytes to read
   // command_buffer[1] == read register
 
@@ -1023,28 +1047,28 @@ void read_blocking_spi() {
 
   // configure the report message
   // calculate the packet length
-  spi_report_message[0] = command_buffer[0] + 3; // packet length
+  spi_report_message[0] = command_buffer[0] + 3;  // packet length
   spi_report_message[1] = SPI_REPORT;
-  spi_report_message[2] = command_buffer[1]; // register
-  spi_report_message[3] = command_buffer[0]; // number of bytes read
+  spi_report_message[2] = command_buffer[1];  // register
+  spi_report_message[3] = command_buffer[0];  // number of bytes read
 
   // write the register out. OR it with 0x80 to indicate a read
   SPI.transfer(command_buffer[1] | 0x80);
 
   // now read the specified number of bytes and place
   // them in the report buffer
-  for (int i = 0; i < command_buffer[0] ; i++) {
+  for (int i = 0; i < command_buffer[0]; i++) {
     spi_report_message[i + 4] = SPI.transfer(0x00);
   }
-  pTxCharacteristic->setValue(spi_report_message, command_buffer[0] + 4);
-  pTxCharacteristic->notify();
+  if (xQueueSend(report_q, (const void *)spi_report_message, 20) != pdTRUE) {
+    rtos_fatal_error_report((char *)"Send reqport_q for read_blocking spi error failed");
+  }
 }
 
 // modify the SPI format
 void set_format_spi() {
 
   SPISettings(command_buffer[0], command_buffer[1], command_buffer[2]);
-
 }
 
 // set the SPI chip select line
@@ -1063,10 +1087,18 @@ void onewire_init() {
 void onewire_reset() {
 
   uint8_t reset_return = ow->reset();
-  uint8_t onewire_report_message[] = {3, ONE_WIRE_REPORT, ONE_WIRE_RESET, reset_return};
 
-  pTxCharacteristic->setValue(onewire_report_message, 4);
-  pTxCharacteristic->notify();
+  uint8_t onewire_report_message[64];
+  memset(onewire_report_message, 0, sizeof(onewire_report_message));
+
+  onewire_report_message[0] = 3;
+  onewire_report_message[1] = ONE_WIRE_REPORT;
+  onewire_report_message[2] = ONE_WIRE_RESET;
+  onewire_report_message[3] = reset_return;
+
+  if (xQueueSend(report_q, (const void *)onewire_report_message, 20) != pdTRUE) {
+    rtos_fatal_error_report((char *)"Send reqport_q for one wire reset failed");
+  }
 }
 
 // send a OneWire select
@@ -1101,11 +1133,17 @@ void onewire_read() {
   // onewire_report_message[3] = data read
 
   uint8_t data = ow->read();
+  uint8_t onewire_report_message[64];
+  memset(onewire_report_message, 0, sizeof(onewire_report_message));
 
-  uint8_t onewire_report_message[] = {3, ONE_WIRE_REPORT, ONE_WIRE_READ, data};
+  onewire_report_message[0] = 3;
+  onewire_report_message[1] = ONE_WIRE_REPORT;
+  onewire_report_message[2] = ONE_WIRE_READ;
+  onewire_report_message[3] = data;
 
-  pTxCharacteristic->setValue(onewire_report_message, 4);
-  pTxCharacteristic->notify();
+  if (xQueueSend(report_q, (const void *)onewire_report_message, 20) != pdTRUE) {
+    rtos_fatal_error_report((char *)"Send reqport_q for one wire read failed");
+  }
 }
 
 // Send a OneWire reset search command
@@ -1116,24 +1154,43 @@ void onewire_reset_search() {
 
 // Send a OneWire search command
 void onewire_search() {
-  uint8_t onewire_report_message[] = {10, ONE_WIRE_REPORT, ONE_WIRE_SEARCH,
-                                      0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
-                                      0xff
-                                     };
+  uint8_t onewire_report_message[64];
+
+  memset(onewire_report_message, 0, sizeof(onewire_report_message));
+
+  onewire_report_message[0] = 10;
+  onewire_report_message[1] = ONE_WIRE_REPORT;
+  onewire_report_message[2] = ONE_WIRE_SEARCH;
+  onewire_report_message[3] = 0xff;
+  onewire_report_message[4] = 0xff;
+  onewire_report_message[5] = 0xff;
+  onewire_report_message[6] = 0xff;
+  onewire_report_message[7] = 0xff;
+  onewire_report_message[8] = 0xff;
+  onewire_report_message[9] = 0xff;
+  onewire_report_message[10] = 0xff;
 
   ow->search(&onewire_report_message[3]);
 
-  pTxCharacteristic->setValue(onewire_report_message, 11);
-  pTxCharacteristic->notify();
+  if (xQueueSend(report_q, (const void *)onewire_report_message, 20) != pdTRUE) {
+    rtos_fatal_error_report((char *)"Send reqport_q for one wire search failed");
+  }
 }
 
 // Calculate a OneWire CRC8 on a buffer containing a specified number of bytes
 void onewire_crc8() {
+  uint8_t onewire_report_message[64];
 
-  uint8_t crc = ow->crc8(&command_buffer[1], command_buffer[0]);
-  uint8_t onewire_report_message[] = {3, ONE_WIRE_REPORT, ONE_WIRE_CRC8, crc};
-  pTxCharacteristic->setValue(onewire_report_message, 4);
-  pTxCharacteristic->notify();
+  memset(onewire_report_message, 0, sizeof(onewire_report_message));
+
+  onewire_report_message[0] = 3;
+  onewire_report_message[1] = ONE_WIRE_REPORT;
+  onewire_report_message[2] = ONE_WIRE_CRC8;
+  onewire_report_message[3] = ow->crc8(&command_buffer[1], command_buffer[0]);
+
+  if (xQueueSend(report_q, (const void *)onewire_report_message, 20) != pdTRUE) {
+    rtos_fatal_error_report((char *)"Send reqport_q for one wire crc8 failed");
+  }
 }
 
 // Stepper Motor supported
@@ -1164,11 +1221,10 @@ void stepper_move_to() {
   long position = (long)(command_buffer[1]) << 24;
   position += (long)(command_buffer[2]) << 16;
   position += command_buffer[3] << 8;
-  position += command_buffer[4] ;
+  position += command_buffer[4];
   if (command_buffer[5]) {
     position *= -1;
   }
-
 
   devices.steppers[command_buffer[0]]->moveTo(position);
 }
@@ -1186,7 +1242,7 @@ void stepper_move() {
   long position = (long)(command_buffer[1]) << 24;
   position += (long)(command_buffer[2]) << 16;
   position += command_buffer[3] << 8;
-  position += command_buffer[4] ;
+  position += command_buffer[4];
   if (command_buffer[5]) {
     position *= -1;
   }
@@ -1194,7 +1250,6 @@ void stepper_move() {
 }
 
 void stepper_run() {
-  //#if !defined (__AVR_ATmega328P__)
   devices.stepper_run_modes[command_buffer[0]] = STEPPER_RUN;
   devices.ok_to_run_motors = true;
 }
@@ -1206,24 +1261,20 @@ void stepper_run_speed() {
 }
 
 void stepper_set_max_speed() {
-  //#if !defined (__AVR_ATmega328P__)
-
   // motor_id = command_buffer[0]
   // speed_msb = command_buffer[1]
   // speed_lsb = command_buffer[2]
 
-  float max_speed = (float) ((command_buffer[1] << 8) + command_buffer[2]);
+  float max_speed = (float)((command_buffer[1] << 8) + command_buffer[2]);
   devices.steppers[command_buffer[0]]->setMaxSpeed(max_speed);
 }
 
 void stepper_set_acceleration() {
-  //#if !defined (__AVR_ATmega328P__)
-
   // motor_id = command_buffer[0]
   // accel_msb = command_buffer[1]
   // accel = command_buffer[2]
 
-  float acceleration = (float) ((command_buffer[1] << 8) + command_buffer[2]);
+  float acceleration = (float)((command_buffer[1] << 8) + command_buffer[2]);
   devices.steppers[command_buffer[0]]->setAcceleration(acceleration);
 }
 
@@ -1232,79 +1283,83 @@ void stepper_set_speed() {
   // motor_id = command_buffer[0]
   // speed_msb = command_buffer[1]
   // speed_lsb = command_buffer[2]
-  //#if !defined (__AVR_ATmega328P__)
+  // polarity = command_buffer[3]
 
-  float speed = (float) ((command_buffer[1] << 8) + command_buffer[2]);
+  float speed = (float)((command_buffer[1] << 8) + command_buffer[2]);
+  if (command_buffer[3] == 1) {
+    speed = speed * -1.0;
+  }
   devices.steppers[command_buffer[0]]->setSpeed(speed);
 }
 
 void stepper_get_distance_to_go() {
-  //#if !defined (__AVR_ATmega328P__)
+  // motor_id = command_buffer[0]
+  // report = STEPPER_DISTANCE_TO_GO, motor_id, distance(8 bytes)
   // motor_id = command_buffer[0]
 
-  // report = STEPPER_DISTANCE_TO_GO, motor_id, distance(8 bytes)
-
-
-
-  byte report_message[7] = {6, STEPPER_DISTANCE_TO_GO, command_buffer[0]};
+  uint8_t report_message[64];
+  memset(report_message, 0, sizeof(report_message));
 
   long dtg = devices.steppers[command_buffer[0]]->distanceToGo();
 
+  report_message[0] = 6;
+  report_message[1] = STEPPER_DISTANCE_TO_GO;
+  report_message[2] = command_buffer[0];
+  report_message[3] = (uint8_t)((dtg & 0xFF000000) >> 24);
+  report_message[4] = (uint8_t)((dtg & 0x00FF0000) >> 16);
+  report_message[5] = (uint8_t)((dtg & 0x0000FF00) >> 8);
+  report_message[6] = (uint8_t)((dtg & 0x000000FF));
 
-  report_message[3] = (byte) ((dtg & 0xFF000000) >> 24);
-  report_message[4] = (byte) ((dtg & 0x00FF0000) >> 16);
-  report_message[5] = (byte) ((dtg & 0x0000FF00) >> 8);
-  report_message[6] = (byte) ((dtg & 0x000000FF));
-
-  // motor_id = command_buffer[0]
-  pTxCharacteristic->setValue(report_message, 7);
-  pTxCharacteristic->notify();
+  if (xQueueSend(report_q, (const void *)report_message, 20) != pdTRUE) {
+    rtos_fatal_error_report((char *)"Send reqport_q for stepper_get_distance_to_go failed");
+  }
 }
 
 void stepper_get_target_position() {
-  //#if !defined (__AVR_ATmega328P__)
   // motor_id = command_buffer[0]
 
-  // report = STEPPER_TARGET_POSITION, motor_id, distance(8 bytes)
+  // report = STEPPER_TARGET_POSITION, motor_id, distance(8 uint8_ts)
 
-
-
-  byte report_message[7] = {6, STEPPER_TARGET_POSITION, command_buffer[0]};
+  uint8_t report_message[64];
+  memset(report_message, 0, sizeof(report_message));
 
   long target = devices.steppers[command_buffer[0]]->targetPosition();
-
-
-  report_message[3] = (byte) ((target & 0xFF000000) >> 24);
-  report_message[4] = (byte) ((target & 0x00FF0000) >> 16);
-  report_message[5] = (byte) ((target & 0x0000FF00) >> 8);
-  report_message[6] = (byte) ((target & 0x000000FF));
+  report_message[0] = 6;
+  report_message[1] = STEPPER_TARGET_POSITION;
+  report_message[2] = command_buffer[0];
+  report_message[3] = (uint8_t)((target & 0xFF000000) >> 24);
+  report_message[4] = (uint8_t)((target & 0x00FF0000) >> 16);
+  report_message[5] = (uint8_t)((target & 0x0000FF00) >> 8);
+  report_message[6] = (uint8_t)((target & 0x000000FF));
 
   // motor_id = command_buffer[0]
-  pTxCharacteristic->setValue(report_message, 7);
-  pTxCharacteristic->notify();
+  if (xQueueSend(report_q, (const void *)report_message, 20) != pdTRUE) {
+    rtos_fatal_error_report((char *)"Send reqport_q for stepper_get_target_position failed");
+  }
 }
 
 void stepper_get_current_position() {
-  //#if !defined (__AVR_ATmega328P__)
   // motor_id = command_buffer[0]
 
-  // report = STEPPER_CURRENT_POSITION, motor_id, distance(8 bytes)
+  // report = STEPPER_CURRENT_POSITION, motor_id, distance(8 uint8_ts)
 
-
-
-  byte report_message[7] = {6, STEPPER_CURRENT_POSITION, command_buffer[0]};
+  uint8_t report_message[64];
+  memset(report_message, 0, sizeof(report_message));
 
   long position = devices.steppers[command_buffer[0]]->targetPosition();
 
-
-  report_message[3] = (byte) ((position & 0xFF000000) >> 24);
-  report_message[4] = (byte) ((position & 0x00FF0000) >> 16);
-  report_message[5] = (byte) ((position & 0x0000FF00) >> 8);
-  report_message[6] = (byte) ((position & 0x000000FF));
+  report_message[0] = 6;
+  report_message[1] = STEPPER_CURRENT_POSITION;
+  report_message[2] = command_buffer[0];
+  report_message[3] = (uint8_t)((position & 0xFF000000) >> 24);
+  report_message[4] = (uint8_t)((position & 0x00FF0000) >> 16);
+  report_message[5] = (uint8_t)((position & 0x0000FF00) >> 8);
+  report_message[6] = (uint8_t)((position & 0x000000FF));
 
   // motor_id = command_buffer[0]
-  pTxCharacteristic->setValue(report_message, 7);
-  pTxCharacteristic->notify();
+  if (xQueueSend(report_q, (const void *)report_message, 20) != pdTRUE) {
+    rtos_fatal_error_report((char *)"Send reqport_q for stepper_get_current_position failed");
+  }
 }
 
 void stepper_set_current_position() {
@@ -1318,7 +1373,7 @@ void stepper_set_current_position() {
   long position = (long)(command_buffer[2]) << 24;
   position += (long)(command_buffer[2]) << 16;
   position += command_buffer[3] << 8;
-  position += command_buffer[4] ;
+  position += command_buffer[4];
 
   devices.steppers[command_buffer[0]]->setCurrentPosition(position);
 }
@@ -1326,15 +1381,12 @@ void stepper_set_current_position() {
 void stepper_run_speed_to_position() {
   devices.stepper_run_modes[command_buffer[0]] = STEPPER_RUN_SPEED_TO_POSITION;
   devices.ok_to_run_motors = true;
-
 }
 
 void stepper_stop() {
   devices.steppers[command_buffer[0]]->stop();
   devices.steppers[command_buffer[0]]->disableOutputs();
   devices.stepper_run_modes[command_buffer[0]] = STEPPER_STOP;
-
-
 }
 
 void stepper_disable_outputs() {
@@ -1351,16 +1403,16 @@ void stepper_set_minimum_pulse_width() {
 }
 
 void stepper_set_enable_pin() {
-  devices.steppers[command_buffer[0]]->setEnablePin((uint8_t) command_buffer[1]);
+  devices.steppers[command_buffer[0]]->setEnablePin((uint8_t)command_buffer[1]);
 }
 
 void stepper_set_3_pins_inverted() {
   // command_buffer[1] = directionInvert
   // command_buffer[2] = stepInvert
   // command_buffer[3] = enableInvert
-  devices.steppers[command_buffer[0]]->setPinsInverted((bool) command_buffer[1],
-      (bool) command_buffer[2],
-      (bool) command_buffer[3]);
+  devices.steppers[command_buffer[0]]->setPinsInverted((bool)command_buffer[1],
+                                                       (bool)command_buffer[2],
+                                                       (bool)command_buffer[3]);
 }
 
 void stepper_set_4_pins_inverted() {
@@ -1369,11 +1421,11 @@ void stepper_set_4_pins_inverted() {
   // command_buffer[3] = pin3
   // command_buffer[4] = pin4
   // command_buffer[5] = enable
-  devices.steppers[command_buffer[0]]->setPinsInverted((bool) command_buffer[1],
-      (bool) command_buffer[2],
-      (bool) command_buffer[3],
-      (bool) command_buffer[4],
-      (bool) command_buffer[5]);
+  devices.steppers[command_buffer[0]]->setPinsInverted((bool)command_buffer[1],
+                                                       (bool)command_buffer[2],
+                                                       (bool)command_buffer[3],
+                                                       (bool)command_buffer[4],
+                                                       (bool)command_buffer[5]);
 }
 
 void stepper_is_running() {
@@ -1381,32 +1433,31 @@ void stepper_is_running() {
 
   // report = STEPPER_IS_RUNNING, motor_id, distance(8 bytes)
 
+  uint8_t report_message[64];
+  memset(report_message, 0, sizeof(report_message));
 
-  byte report_message[3] = {2, STEPPER_RUNNING_REPORT, command_buffer[0]};
+  report_message[0] = 2;
+  report_message[1] = STEPPER_RUNNING_REPORT;
+  report_message[2] = command_buffer[0];
+  report_message[3] = devices.steppers[command_buffer[0]]->isRunning();
 
-  report_message[2]  = devices.steppers[command_buffer[0]]->isRunning();
-
-  pTxCharacteristic->setValue(report_message, 3);
-  pTxCharacteristic->notify();
+  if (xQueueSend(report_q, (const void *)report_message, 20) != pdTRUE) {
+    rtos_fatal_error_report((char *)"Send reqport_q for stepper_is_running failed");
+  }
 }
 
-void stop_all_reports()
-{
+void stop_all_reports() {
   stop_reports = true;
-  delay(20);
-  //Serial.flush();
+  vTaskDelay(20 / portTICK_PERIOD_MS);
 }
 
-void enable_all_reports()
-{
-  //Serial.flush();
+void enable_all_reports() {
   stop_reports = false;
-  delay(20);
+  vTaskDelay(20 / portTICK_PERIOD_MS);
 }
 
-void scan_digital_inputs()
-{
-  byte value;
+void scan_digital_inputs(void *parameter) {
+  uint8_t value;
 
   // report message
 
@@ -1414,34 +1465,38 @@ void scan_digital_inputs()
   // byte 1 = report type
   // byte 2 = pin number
   // byte 3 = value
-  byte report_message[4] = {3, DIGITAL_REPORT, 0, 0};
 
-  for (int i = 0; i < MAX_PINS_SUPPORTED; i++)
-  {
-    if (the_digital_pins[i].pin_mode == AT_INPUT ||
-        the_digital_pins[i].pin_mode == AT_INPUT_PULLUP ||
-        the_digital_pins[i].pin_mode == AT_INPUT_PULLDOWN)
-    {
-      if (the_digital_pins[i].reporting_enabled)
-      {
-        // if the value changed since last read
-        value = (byte)digitalRead(the_digital_pins[i].pin_number);
-        if (value != the_digital_pins[i].last_value)
-        {
-          the_digital_pins[i].last_value = value;
-          report_message[2] = (byte)i;
-          report_message[3] = value;
-          pTxCharacteristic->setValue(report_message, 4);
-          pTxCharacteristic->notify();
+  uint8_t report_message[64];
+
+  while (1) {
+
+    if (can_scan) {
+      for (int i = 0; i < MAX_PINS_SUPPORTED; i++) {
+        if (the_digital_pins[i].pin_mode == AT_INPUT || the_digital_pins[i].pin_mode == AT_INPUT_PULLUP || the_digital_pins[i].pin_mode == AT_INPUT_PULLDOWN) {
+          if (the_digital_pins[i].reporting_enabled) {
+            // if the value changed since last read
+            value = (uint8_t)digitalRead(the_digital_pins[i].pin_number);
+            if (value != the_digital_pins[i].last_value) {
+              memset(report_message, 0, sizeof(report_message));
+              report_message[0] = 3;
+              report_message[1] = DIGITAL_REPORT;
+              the_digital_pins[i].last_value = value;
+              report_message[2] = (uint8_t)i;
+              report_message[3] = value;
+              if (xQueueSend(report_q, (const void *)report_message, 20) != pdTRUE) {
+                rtos_fatal_error_report((char *)"Send reqport_q for scan_digital_inputs failed");
+              }
+            }
+            vTaskDelay(1 / portTICK_PERIOD_MS);
+          }
         }
       }
+      vTaskDelay(1 / portTICK_PERIOD_MS);
     }
   }
 }
 
-void scan_analog_inputs()
-{
-  int value;
+void scan_analog_inputs(void *parameters) {
 
   // report message
 
@@ -1451,56 +1506,58 @@ void scan_analog_inputs()
   // byte 3 = high order byte of value
   // byte 4 = low order byte of value
 
-  byte report_message[5] = {4, ANALOG_REPORT, 0, 0, 0};
-
-  //uint8_t adjusted_pin_number;
+  int value;
+  uint8_t report_message[64];
   int differential;
+  TickType_t xLastWakeTime;
+  xLastWakeTime = xTaskGetTickCount();
+  while (1) {
+    if (can_scan) {
+      for (int i = 0; i < MAX_PINS_SUPPORTED; i++) {
+        if (the_analog_pins[i].pin_mode == AT_ANALOG) {
+          if (the_analog_pins[i].reporting_enabled) {
+            value = analogRead(i);
+            //Serial.println(value);
 
-  current_millis = millis();
-  if (current_millis - previous_millis > analog_sampling_interval)
-  {
-    previous_millis = current_millis;
+            differential = abs(value - the_analog_pins[i].last_value);
+            if (differential >= the_analog_pins[i].differential) {
+              memset(report_message, 0, sizeof(report_message));
 
-    for (int i = 0; i < MAX_PINS_SUPPORTED; i++)
-    {
-      if (the_analog_pins[i].pin_mode == AT_ANALOG)
-      {
-        if (the_analog_pins[i].reporting_enabled)
-        {
-          value = analogRead(i);
-          differential = abs(value - the_analog_pins[i].last_value);
-          if (differential >= the_analog_pins[i].differential)
-          {
-            //trigger value achieved, send out the report
-            the_analog_pins[i].last_value = value;
-            // input_message[1] = the_analog_pins[i].pin_number;
-            report_message[2] = (byte)i;
-            report_message[3] = highByte(value); // get high order byte
-            report_message[4] = lowByte(value);
-            pTxCharacteristic->setValue(report_message, 5);
-            pTxCharacteristic->notify();
-            delay(1);
+              report_message[0] = 4;
+              report_message[1] = ANALOG_REPORT;
+              // trigger value achieved, send out the report
+              the_analog_pins[i].last_value = value;
+              // input_message[1] = the_analog_pins[i].pin_number;
+              report_message[2] = (uint8_t)i;
+              report_message[3] = highByte(value);  // get high order byte
+              report_message[4] = lowByte(value);
+              // report_message[3] = value;
+              if (xQueueSend(report_q, (const void *)report_message, 20) != pdTRUE) {
+                rtos_fatal_error_report((char *)"Send reqport_q for scan_analog_inputs failed");
+              }
+              vTaskDelayUntil(&xLastWakeTime, pdMS_TO_TICKS( analog_sampling_interval ));
+              //vTaskDelay(analog_sampling_interval / portTICK_PERIOD_MS);
+            }
           }
         }
       }
     }
+    vTaskDelay(1 / portTICK_PERIOD_MS);
   }
 }
 
-void scan_sonars()
-{
+void scan_sonars(void *parameter) {
   unsigned int distance;
-
-  if (devices.sonars_index)
-  {
-    {
-      sonar_current_millis = millis();
-      if (sonar_current_millis - sonar_previous_millis > sonar_scan_interval)
-      {
-        sonar_previous_millis = sonar_current_millis;
+  uint8_t report_message[64];
+  TickType_t xLastWakeTime;
+  xLastWakeTime = xTaskGetTickCount();
+  while (1) {
+    if (can_scan) {
+      // Serial.print("can scan sonars");
+      if (devices.sonars_index) {
+        //Serial.println(devices.sonars_index);
         distance = devices.sonars[devices.last_sonar_visited].usonic->read();
-        if (distance != devices.sonars[devices.last_sonar_visited].last_value)
-        {
+        if (distance != devices.sonars[devices.last_sonar_visited].last_value) {
           devices.sonars[devices.last_sonar_visited].last_value = distance;
 
           // byte 0 = packet length
@@ -1508,25 +1565,30 @@ void scan_sonars()
           // byte 2 = trigger pin number
           // byte 3 = distance high order byte
           // byte 4 = distance low order byte
-          byte report_message[5] = {4, SONAR_DISTANCE, devices.sonars[devices.last_sonar_visited]
-                                    .trigger_pin,
-                                    (byte)(distance >> 8), (byte)(distance & 0xff)
-                                   };
-          pTxCharacteristic->setValue(report_message, 5);
-          pTxCharacteristic->notify();
+          memset(report_message, 0, sizeof(report_message));
+
+          report_message[0] = 4;
+          report_message[1] = SONAR_DISTANCE;
+          report_message[2] = devices.sonars[devices.last_sonar_visited].trigger_pin;
+          report_message[3] = (uint8_t)(distance >> 8);
+          report_message[4] = (uint8_t)(distance & 0xff);
+          if (xQueueSend(report_q, (const void *)report_message, 20) != pdTRUE) {
+            rtos_fatal_error_report((char *)"Send reqport_q for scan_sonar failed");
+          }
+          vTaskDelayUntil(&xLastWakeTime, pdMS_TO_TICKS( sonar_scan_interval ));
         }
         devices.last_sonar_visited++;
-        if (devices.last_sonar_visited == devices.sonars_index)
-        {
+        if (devices.last_sonar_visited == devices.sonars_index) {
           devices.last_sonar_visited = 0;
         }
+          vTaskDelayUntil(&xLastWakeTime, pdMS_TO_TICKS( sonar_scan_interval ));
       }
     }
+    vTaskDelayUntil(&xLastWakeTime, pdMS_TO_TICKS( sonar_scan_interval ));
   }
 }
 
-void scan_dhts()
-{
+void scan_dhts(void *parameter) {
   // prebuild report for valid data
   // reuse the report if a read command fails
 
@@ -1545,58 +1607,67 @@ void scan_dhts()
   // byte 9 = temperature byte 2
   // byte 10 = temperature byte 3
   // byte 11 = temperature byte 4
-  byte report_message[12] = {11, DHT_REPORT, DHT_DATA, 0, 0, 0, 0, 0, 0, 0, 0, 0};
 
-  byte d_read;
+  uint8_t report_message[64];
+  TickType_t xLastWakeTime;
+  xLastWakeTime = xTaskGetTickCount();
+
+  uint8_t d_read;
 
   float dht_data;
 
-  // are there any dhts to read?
-  if (devices.dht_index)
-  {
-    // is it time to do the read? This should occur every 2 seconds
-    dht_current_millis = millis();
-    if (dht_current_millis - dht_previous_millis > dht_scan_interval)
-    {
-      // update for the next scan
-      dht_previous_millis = dht_current_millis;
+  while (1) {
+    if (can_scan) {
+      // are there any dhts to read?
+      //Serial.println(devices.dht_index);
+      if (devices.dht_index) {
+        // is it time to do the read? This should occur every 2 seconds
 
-      // read and report all the dht sensors
-      for (int i = 0; i < devices.dht_index; i++)
-      {
-        report_message[3] = devices.dhts[i].pin;
-        // get humidity
-        dht_data = devices.dhts[i].dht_sensor->getHumidity();
-        memcpy(&report_message[4], &dht_data, sizeof dht_data);
-
-        // get temperature
-        dht_data = devices.dhts[i].dht_sensor->getTemperature();
-        memcpy(&report_message[8], &dht_data, sizeof dht_data);
-        pTxCharacteristic->setValue(report_message, 12);
-        pTxCharacteristic->notify();
-
-        // now read do a read for this device for next go around
-        d_read = devices.dhts[i].dht_sensor->read();
-
-        if (d_read)
-        {
-          // error found
-          // send report
-          report_message[0] = 4;
+        // read and report all the dht sensors
+        for (int i = 0; i < devices.dht_index; i++) {
+          memset(report_message, 0, sizeof(report_message));
+          report_message[0] = 11;
           report_message[1] = DHT_REPORT;
-          report_message[2] = DHT_READ_ERROR;
-          report_message[3] = devices.dhts[i].pin; // pin number
-          report_message[4] = d_read;
-          pTxCharacteristic->setValue(report_message, 5);
-          pTxCharacteristic->notify();
+          report_message[2] = DHT_DATA;
+          report_message[3] = devices.dhts[i].pin;
+          // get humidity
+          dht_data = devices.dhts[i].dht_sensor->getHumidity();
+          memcpy(&report_message[4], &dht_data, sizeof dht_data);
+
+          // get temperature
+          dht_data = devices.dhts[i].dht_sensor->getTemperature();
+          memcpy(&report_message[8], &dht_data, sizeof dht_data);
+
+          if (xQueueSend(report_q, (const void *)report_message, 20) != pdTRUE) {
+            rtos_fatal_error_report((char *)"Send reqport_q for scan_dhts failed");
+          }
+
+          // now read do a read for this device for next go around
+          d_read = devices.dhts[i].dht_sensor->read();
+
+          if (d_read) {
+            // error found
+            // send report
+            report_message[0] = 4;
+            report_message[1] = DHT_REPORT;
+            report_message[2] = DHT_READ_ERROR;
+            report_message[3] = devices.dhts[i].pin;  // pin number
+            report_message[4] = d_read;
+
+            if (xQueueSend(report_q, (const void *)report_message, 20) != pdTRUE) {
+              rtos_fatal_error_report((char *)"Send reqport_q for scan_dhts(2) failed");
+            }
+            vTaskDelayUntil(&xLastWakeTime, pdMS_TO_TICKS( dht_scan_interval ));
+          }
         }
       }
+      vTaskDelayUntil(&xLastWakeTime, pdMS_TO_TICKS( dht_scan_interval ));
+
     }
   }
 }
 
-void scan_touch()
-{
+void scan_touch(void *parameter) {
   int value;
 
   // report message
@@ -1607,36 +1678,38 @@ void scan_touch()
   // byte 3 = high order byte of value
   // byte 4 = low order byte of value
 
-  byte report_message[5] = {4, TOUCH_REPORT, 0, 0, 0};
+  uint8_t report_message[64];
+  TickType_t xLastWakeTime;
+  xLastWakeTime = xTaskGetTickCount();
+  while (1) {
+    if (can_scan) {
+      memset(report_message, 0, sizeof(report_message));
+      report_message[0] = 4;
+      report_message[1] = TOUCH_REPORT;
 
-  int differential;
+      int differential;
 
-  touch_current_millis = millis();
-  if (touch_current_millis - touch_previous_millis > touch_sampling_interval)
-  {
-    touch_previous_millis = touch_current_millis;
+      for (int i = 0; i < MAX_PINS_SUPPORTED; i++) {
+        if (the_touch_pins[i].reporting_enabled) {
+          value = touchRead(i);
+          Serial.println(value);
 
-    for (int i = 0; i < MAX_PINS_SUPPORTED; i++)
-    {
+          differential = abs(value - the_touch_pins[i].last_value);
+          if (differential >= the_touch_pins[i].differential) {
+            // trigger value achieved, send out the report
+            the_touch_pins[i].last_value = value;
+            // input_message[1] = the_analog_pins[i].pin_number;
+            report_message[2] = (uint8_t)i;
+            report_message[3] = highByte(value);  // get high order byte
+            report_message[4] = lowByte(value);
 
-      if (the_touch_pins[i].reporting_enabled)
-      {
-        value = touchRead(i);
-
-        differential = abs(value - the_touch_pins[i].last_value);
-        if (differential >= the_touch_pins[i].differential)
-        {
-          //trigger value achieved, send out the report
-          the_touch_pins[i].last_value = value;
-          // input_message[1] = the_analog_pins[i].pin_number;
-          report_message[2] = (byte)i;
-          report_message[3] = highByte(value); // get high order byte
-          report_message[4] = lowByte(value);
-          pTxCharacteristic->setValue(report_message, 5);
-          pTxCharacteristic->notify();
-          delay(1);
+            if (xQueueSend(report_q, (const void *)report_message, 20) != pdTRUE) {
+              rtos_fatal_error_report((char *)"Send reqport_q for scan_touch failed");
+            }
+          }
         }
       }
+      vTaskDelayUntil(&xLastWakeTime, pdMS_TO_TICKS( touch_sampling_interval ));
     }
   }
 }
@@ -1646,8 +1719,7 @@ void reset_data() {
 }
 
 void init_pin_structures() {
-  for (byte i = 0; i < MAX_PINS_SUPPORTED; i++)
-  {
+  for (uint8_t i = 0; i < MAX_PINS_SUPPORTED; i++) {
     the_digital_pins[i].pin_number = i;
     the_digital_pins[i].pin_mode = AT_MODE_NOT_SET;
     the_digital_pins[i].reporting_enabled = false;
@@ -1665,8 +1737,7 @@ void init_pin_structures() {
   }
 
   // establish the analog pin array
-  for (byte i = 0; i < MAX_PINS_SUPPORTED; i++)
-  {
+  for (uint8_t i = 0; i < MAX_PINS_SUPPORTED; i++) {
     the_analog_pins[i].pin_number = i;
     the_analog_pins[i].pin_mode = AT_MODE_NOT_SET;
     the_analog_pins[i].reporting_enabled = false;
@@ -1675,55 +1746,140 @@ void init_pin_structures() {
   }
 }
 
-void run_steppers() {
+void run_steppers(void *parameter) {
   boolean running;
-  long current_position ;
+  long current_position;
   long target_position;
+  uint8_t report_message[64];
 
-  if (devices.ok_to_run_motors) {
+  while (1) {
+    if (devices.ok_to_run_motors) {
+      for (int i = 0; i < devices.steppers_index; i++) {
+        if (devices.stepper_run_modes[i] == STEPPER_STOP) {
+          continue;
+        } else {
+          devices.steppers[i]->enableOutputs();
+          switch (devices.stepper_run_modes[i]) {
+            case STEPPER_RUN:
+              devices.steppers[i]->run();
+              running = devices.steppers[i]->isRunning();
+              if (!running) {
+                memset(report_message, 0, sizeof(report_message));
+                report_message[0] = 2;
+                report_message[1] = STEPPER_RUN_COMPLETE_REPORT;
+                report_message[2] = (uint8_t)i;
 
-    for ( int i = 0; i < devices.steppers_index; i++) {
-      if (devices.stepper_run_modes[i] == STEPPER_STOP) {
-        continue;
-      }
-      else {
-        devices.steppers[i]->enableOutputs();
-        switch (devices.stepper_run_modes[i]) {
-          case STEPPER_RUN:
-            devices.steppers[i]->run();
-            running = devices.steppers[i]->isRunning();
-            if (!running) {
-              byte report_message[3] = {2, STEPPER_RUN_COMPLETE_REPORT, (byte)i};
-              pTxCharacteristic->setValue(report_message, 3);
-              pTxCharacteristic->notify();
-              devices.stepper_run_modes[i] = STEPPER_STOP;
-            }
-            break;
-          case STEPPER_RUN_SPEED:
-            devices.steppers[i]->runSpeed();
-            break;
-          case STEPPER_RUN_SPEED_TO_POSITION:
-            running = devices.steppers[i]->runSpeedToPosition();
-            target_position = devices.steppers[i]->targetPosition();
-            if (target_position == devices.steppers[i]->currentPosition()) {
-              byte report_message[3] = {2, STEPPER_RUN_COMPLETE_REPORT, (byte)i};
-              pTxCharacteristic->setValue(report_message, 3);
-              pTxCharacteristic->notify();
-              devices.stepper_run_modes[i] = STEPPER_STOP;
-            }
-            break;
-          default:
-            break;
+                if (xQueueSend(report_q, (const void *)report_message, 20) != pdTRUE) {
+                  rtos_fatal_error_report((char *)"Send reqport_q for stepper run complete failed");
+                }
+                devices.stepper_run_modes[i] = STEPPER_STOP;
+              }
+              break;
+            case STEPPER_RUN_SPEED:
+              devices.steppers[i]->runSpeed();
+              break;
+            case STEPPER_RUN_SPEED_TO_POSITION:
+              running = devices.steppers[i]->runSpeedToPosition();
+              target_position = devices.steppers[i]->targetPosition();
+              if (target_position == devices.steppers[i]->currentPosition()) {
+                memset(report_message, 0, sizeof(report_message));
+
+                uint8_t report_message[3] = { 2, STEPPER_RUN_COMPLETE_REPORT, (uint8_t)i };
+                report_message[0] = 2;
+                report_message[1] = STEPPER_RUN_COMPLETE_REPORT;
+                report_message[2] = (uint8_t)i;
+
+                if (xQueueSend(report_q, (const void *)report_message, 20) != pdTRUE) {
+                  rtos_fatal_error_report((char *)"Send reqport_q for stepper run complete failed");
+                }
+                devices.stepper_run_modes[i] = STEPPER_STOP;
+              }
+              break;
+            default:
+              vTaskDelay(1 / portTICK_PERIOD_MS);
+              break;
+          }
         }
       }
+    }
+    vTaskDelay(1 / portTICK_PERIOD_MS);
+  }
+}
+
+// print the error and then blink board led forever
+void rtos_fatal_error_report(char *report) {
+  Serial.println(report);
+  while (1) {
+    digitalWrite(BUILTIN_LED, LOW);
+    vTaskDelay(1000 / portTICK_PERIOD_MS);
+    digitalWrite(BUILTIN_LED, HIGH);
+    vTaskDelay(1000 / portTICK_PERIOD_MS);
+  }
+}
+
+
+void send_report(void *parameter) {
+  while (1) {
+    if (deviceConnected) {
+
+      // byte bx[] = {1, 2, 3, 4, 0, 0, 0};
+      uint8_t xreport_buffer[64];
+      memset(xreport_buffer, 0, sizeof(xreport_buffer));
+
+      if (xQueueReceive(report_q, xreport_buffer, 10) == pdTRUE) {
+
+        pTxCharacteristic->setValue(xreport_buffer, xreport_buffer[0]);
+        pTxCharacteristic->notify();
+      }
+
+      vTaskDelay(1 / portTICK_PERIOD_MS);
+    }
+
+
+
+    else {
+      vTaskDelay(1 / portTICK_PERIOD_MS);
     }
   }
 }
 
-void setup()
-{
-  // Set WiFi to station mode and disconnect from an AP if it was previously connected
+
+
+// rtos tasks
+void get_next_command(void *parameter) {
+  command_descriptor command_entry;
+  uint8_t command, length;
+
+  memset(command_buffer, 0, sizeof(command_buffer));
+
+  // get the next entry on command_q
+  while (1) {
+    if (deviceConnected == true) {
+      if (xQueueReceive(command_q, command_buffer, 10) == pdTRUE) {
+        command = command_buffer[0];
+        // get function pointer to command
+        command_entry = command_table[command];
+        Serial.print("get_next command: ");
+      Serial.println(command);
+      vTaskDelay(1000 / portTICK_PERIOD_MS);
+
+        // copy only the payload to the command buffer
+        // the packet length and command id are removed.
+        //for (int i = 0; i < rxValue.length() - 2; i++) {
+        //    command_buffer[i] = buf[i + 2];
+        //  execute the command
+      command_entry.command_func();
+      }
+    }
+    else {
+      vTaskDelay(1 / portTICK_PERIOD_MS);
+    }
+  }
+}
+
+void setup() {
   Serial.begin(115200);
+
 
   init_pin_structures();
 
@@ -1744,16 +1900,14 @@ void setup()
 
   // Create a BLE Characteristic
   pTxCharacteristic = pService->createCharacteristic(
-                        CHARACTERISTIC_UUID_TX,
-                        BLECharacteristic::PROPERTY_NOTIFY
-                      );
+    CHARACTERISTIC_UUID_TX,
+    BLECharacteristic::PROPERTY_NOTIFY);
 
   pTxCharacteristic->addDescriptor(new BLE2902());
 
-  BLECharacteristic * pRxCharacteristic = pService->createCharacteristic(
-      CHARACTERISTIC_UUID_RX,
-      BLECharacteristic::PROPERTY_WRITE
-                                          );
+  BLECharacteristic *pRxCharacteristic = pService->createCharacteristic(
+    CHARACTERISTIC_UUID_RX,
+    BLECharacteristic::PROPERTY_WRITE);
 
   pRxCharacteristic->setCallbacks(new MyCallbacks());
 
@@ -1762,36 +1916,27 @@ void setup()
 
   // Start advertising
   pServer->getAdvertising()->start();
+
+
   Serial.println("Waiting a client connection to notify...");
+  while(!device_connected){
+       vTaskDelay(10 / portTICK_PERIOD_MS);
+
+  }
+  xTaskCreatePinnedToCore(get_next_command, "get next command", 2048, NULL, 5, NULL, app_cpu);
+  xTaskCreatePinnedToCore(send_report, "send report", 2048, NULL, 2, NULL, app_cpu);
+  xTaskCreatePinnedToCore(scan_digital_inputs, "scan_digital_inputs", 2048, NULL, 2, NULL, app_cpu);
+  xTaskCreatePinnedToCore(scan_analog_inputs, "scan_analog_inputs", 2048, NULL, 2, NULL, app_cpu);
+  xTaskCreatePinnedToCore(scan_touch, "scan_touch", 2048, NULL, 4, NULL, app_cpu);
+  xTaskCreatePinnedToCore(scan_sonars, "scan_sonars", 2048, NULL, 2, NULL, app_cpu);
+  xTaskCreatePinnedToCore(scan_dhts, "scan_dhts", 2048, NULL, 5, NULL, app_cpu);
+  xTaskCreatePinnedToCore(run_steppers, "run_steppers", 2048, NULL, 2, NULL, app_cpu);
+
+  vTaskDelay(100/ portTICK_PERIOD_MS);
+
+  vTaskDelete(NULL);
 }
 
-void loop()
-{
-
-  if (deviceConnected) {
-    if (!stop_reports)
-    {
-      if (can_scan) {
-        scan_digital_inputs();
-        scan_analog_inputs();
-        scan_sonars();
-        scan_dhts();
-        scan_touch();
-        run_steppers();
-      }
-    }
-  }
-
-  // disconnecting
-  if (!deviceConnected && oldDeviceConnected) {
-    delay(500); // give the bluetooth stack the chance to get things ready
-    pServer->startAdvertising(); // restart advertising
-    Serial.println("start advertising");
-    oldDeviceConnected = deviceConnected;
-  }
-  // connecting
-  if (deviceConnected && !oldDeviceConnected) {
-    // do stuff here on connecting
-    oldDeviceConnected = deviceConnected;
-  }
+void loop() {
+  // Nothing to do here
 }
