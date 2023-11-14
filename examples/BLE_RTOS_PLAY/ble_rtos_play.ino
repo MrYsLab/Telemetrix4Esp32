@@ -1009,10 +1009,7 @@ void scan_digital_inputs(void *parameter) {
   // byte 1 = report type
   // byte 2 = pin number
   // byte 3 = value
-  for (;;) {
-    if (!can_scan) {
-      vTaskDelay(dht_scan_interval / portTICK_PERIOD_MS);
-    }
+  while (1) {
     byte report_message[4] = { 3, DIGITAL_REPORT, 0, 0 };
 
     for (int i = 0; i < MAX_PINS_SUPPORTED; i++) {
@@ -1030,7 +1027,6 @@ void scan_digital_inputs(void *parameter) {
         }
       }
     }
-    vTaskDelay(10 / portTICK_PERIOD_MS);
   }
 }
 
@@ -1045,91 +1041,84 @@ void scan_analog_inputs(void *parameter) {
   // byte 3 = high order byte of value
   // byte 4 = low order byte of value
   for (;;) {
-    if (!can_scan) {
-      vTaskDelay(1 / portTICK_PERIOD_MS);
-    }
     //send_command("scan_analog_inputs");
     //vTaskDelay(10 / portTICK_PERIOD_MS);
     byte report_message[5] = { 4, ANALOG_REPORT, 0, 0, 0 };
-    //Serial.println("scan_analog");
+
     //uint8_t adjusted_pin_number;
     int differential;
     //Serial.println("scan analog inputs");
 
-    //current_millis = millis();
-    //if (current_millis - previous_millis > analog_sampling_interval) {
-    //previous_millis = current_millis;
-    //Serial.println("scan analog 2");
-    for (int i = 0; i < MAX_PINS_SUPPORTED; i++) {
-      if (the_analog_pins[i].pin_mode == AT_ANALOG) {
-        if (the_analog_pins[i].reporting_enabled) {
-          value = analogRead(i);
-          //Serial.print("Analog Read: ");
-          //Serial.print(i);
-          //Serial.println(value);
+    current_millis = millis();
+    if (current_millis - previous_millis > analog_sampling_interval) {
+      previous_millis = current_millis;
 
-          differential = abs(value - the_analog_pins[i].last_value);
-          if (differential >= the_analog_pins[i].differential) {
-            //trigger value achieved, send out the report
-            the_analog_pins[i].last_value = value;
-            // input_message[1] = the_analog_pins[i].pin_number;
-            report_message[2] = (byte)i;
-            report_message[3] = highByte(value);  // get high order byte
-            report_message[4] = lowByte(value);
-            if (xQueueSend(report_q, (const void *)report_message, 2000) != pdTRUE) {
-              rtos_fatal_error_report((char *)"Send on report_q failed");
+      for (int i = 0; i < MAX_PINS_SUPPORTED; i++) {
+        if (the_analog_pins[i].pin_mode == AT_ANALOG) {
+          if (the_analog_pins[i].reporting_enabled) {
+            value = analogRead(i);
+            //Serial.print("Analog Read: ");
+            //Serial.print(i);
+            //Serial.println(value);
+
+            differential = abs(value - the_analog_pins[i].last_value);
+            if (differential >= the_analog_pins[i].differential) {
+              //trigger value achieved, send out the report
+              the_analog_pins[i].last_value = value;
+              // input_message[1] = the_analog_pins[i].pin_number;
+              report_message[2] = (byte)i;
+              report_message[3] = highByte(value);  // get high order byte
+              report_message[4] = lowByte(value);
+              if (xQueueSend(report_q, (const void *)report_message, 2000) != pdTRUE) {
+                rtos_fatal_error_report((char *)"Send on report_q failed");
+              }
+
+              vTaskDelay(1 / portTICK_PERIOD_MS);
+
+
+              //pTxCharacteristic->setValue(report_message, 5);
+              //pTxCharacteristic->notify();
+              //delay(1);
             }
-
-
-
-            //pTxCharacteristic->setValue(report_message, 5);
-            //pTxCharacteristic->notify();
-            //delay(1);
           }
         }
       }
     }
-    vTaskDelay(analog_sampling_interval / portTICK_PERIOD_MS);
   }
 }
-
 
 void scan_sonars(void *parameter) {
   unsigned int distance;
 
-  for (;;) {
-    if (!can_scan) {
-      vTaskDelay(dht_scan_interval / portTICK_PERIOD_MS);
-    }
+  while (1) {
     if (devices.sonars_index) {
       {
-        //sonar_current_millis = millis();
-        //if (sonar_current_millis - sonar_previous_millis > sonar_scan_interval) {
-        //sonar_previous_millis = sonar_current_millis;
-        distance = devices.sonars[devices.last_sonar_visited].usonic->read();
-        if (distance != devices.sonars[devices.last_sonar_visited].last_value) {
-          devices.sonars[devices.last_sonar_visited].last_value = distance;
+        sonar_current_millis = millis();
+        if (sonar_current_millis - sonar_previous_millis > sonar_scan_interval) {
+          sonar_previous_millis = sonar_current_millis;
+          distance = devices.sonars[devices.last_sonar_visited].usonic->read();
+          if (distance != devices.sonars[devices.last_sonar_visited].last_value) {
+            devices.sonars[devices.last_sonar_visited].last_value = distance;
 
-          // byte 0 = packet length
-          // byte 1 = report type
-          // byte 2 = trigger pin number
-          // byte 3 = distance high order byte
-          // byte 4 = distance low order byte
-          byte report_message[5] = { 4, SONAR_DISTANCE, devices.sonars[devices.last_sonar_visited].trigger_pin,
-                                     (byte)(distance >> 8), (byte)(distance & 0xff) };
-          pTxCharacteristic->setValue(report_message, 5);
-          pTxCharacteristic->notify();
-        }
-        devices.last_sonar_visited++;
-        if (devices.last_sonar_visited == devices.sonars_index) {
-          devices.last_sonar_visited = 0;
+            // byte 0 = packet length
+            // byte 1 = report type
+            // byte 2 = trigger pin number
+            // byte 3 = distance high order byte
+            // byte 4 = distance low order byte
+            byte report_message[5] = { 4, SONAR_DISTANCE, devices.sonars[devices.last_sonar_visited].trigger_pin,
+                                       (byte)(distance >> 8), (byte)(distance & 0xff) };
+            pTxCharacteristic->setValue(report_message, 5);
+            pTxCharacteristic->notify();
+          }
+          devices.last_sonar_visited++;
+          if (devices.last_sonar_visited == devices.sonars_index) {
+            devices.last_sonar_visited = 0;
+          }
         }
       }
     }
-    vTaskDelay(sonar_scan_interval / portTICK_PERIOD_MS);
   }
 }
-
 
 void scan_dhts(void *parameter) {
   // prebuild report for valid data
@@ -1156,51 +1145,47 @@ void scan_dhts(void *parameter) {
 
   float dht_data;
 
-  for (;;) {
-    if (!can_scan) {
-      vTaskDelay(dht_scan_interval / portTICK_PERIOD_MS);
-    }
+  while (1) {
     // are there any dhts to read?
     if (devices.dht_index) {
       // is it time to do the read? This should occur every 2 seconds
-      //dht_current_millis = millis();
-      //'if (dht_current_millis - dht_previous_millis > dht_scan_interval) {
-      // update for the next scan
-      //dht_previous_millis = dht_current_millis;
+      dht_current_millis = millis();
+      if (dht_current_millis - dht_previous_millis > dht_scan_interval) {
+        // update for the next scan
+        dht_previous_millis = dht_current_millis;
 
-      // read and report all the dht sensors
-      for (int i = 0; i < devices.dht_index; i++) {
-        report_message[3] = devices.dhts[i].pin;
-        // get humidity
-        dht_data = devices.dhts[i].dht_sensor->getHumidity();
-        memcpy(&report_message[4], &dht_data, sizeof dht_data);
+        // read and report all the dht sensors
+        for (int i = 0; i < devices.dht_index; i++) {
+          report_message[3] = devices.dhts[i].pin;
+          // get humidity
+          dht_data = devices.dhts[i].dht_sensor->getHumidity();
+          memcpy(&report_message[4], &dht_data, sizeof dht_data);
 
-        // get temperature
-        dht_data = devices.dhts[i].dht_sensor->getTemperature();
-        memcpy(&report_message[8], &dht_data, sizeof dht_data);
-        pTxCharacteristic->setValue(report_message, 12);
-        pTxCharacteristic->notify();
-
-        // now read do a read for this device for next go around
-        d_read = devices.dhts[i].dht_sensor->read();
-
-        if (d_read) {
-          // error found
-          // send report
-          report_message[0] = 4;
-          report_message[1] = DHT_REPORT;
-          report_message[2] = DHT_READ_ERROR;
-          report_message[3] = devices.dhts[i].pin;  // pin number
-          report_message[4] = d_read;
-          pTxCharacteristic->setValue(report_message, 5);
+          // get temperature
+          dht_data = devices.dhts[i].dht_sensor->getTemperature();
+          memcpy(&report_message[8], &dht_data, sizeof dht_data);
+          pTxCharacteristic->setValue(report_message, 12);
           pTxCharacteristic->notify();
+
+          // now read do a read for this device for next go around
+          d_read = devices.dhts[i].dht_sensor->read();
+
+          if (d_read) {
+            // error found
+            // send report
+            report_message[0] = 4;
+            report_message[1] = DHT_REPORT;
+            report_message[2] = DHT_READ_ERROR;
+            report_message[3] = devices.dhts[i].pin;  // pin number
+            report_message[4] = d_read;
+            pTxCharacteristic->setValue(report_message, 5);
+            pTxCharacteristic->notify();
+          }
         }
       }
     }
-    vTaskDelay(dht_scan_interval / portTICK_PERIOD_MS);
   }
 }
-
 
 void scan_touch(void *parameter) {
   int value;
@@ -1213,42 +1198,37 @@ void scan_touch(void *parameter) {
   // byte 3 = high order byte of value
   // byte 4 = low order byte of value
 
-  for (;;) {
+  while (1) {
     byte report_message[5] = { 4, TOUCH_REPORT, 0, 0, 0 };
-
-    if (!can_scan) {
-      vTaskDelay(dht_scan_interval / portTICK_PERIOD_MS);
-    }
 
     int differential;
 
-    //touch_current_millis = millis();
-    //if (touch_current_millis - touch_previous_millis > touch_sampling_interval) {
-    //touch_previous_millis = touch_current_millis;
+    touch_current_millis = millis();
+    if (touch_current_millis - touch_previous_millis > touch_sampling_interval) {
+      touch_previous_millis = touch_current_millis;
 
-    for (int i = 0; i < MAX_PINS_SUPPORTED; i++) {
+      for (int i = 0; i < MAX_PINS_SUPPORTED; i++) {
 
-      if (the_touch_pins[i].reporting_enabled) {
-        value = touchRead(i);
+        if (the_touch_pins[i].reporting_enabled) {
+          value = touchRead(i);
 
-        differential = abs(value - the_touch_pins[i].last_value);
-        if (differential >= the_touch_pins[i].differential) {
-          //trigger value achieved, send out the report
-          the_touch_pins[i].last_value = value;
-          // input_message[1] = the_analog_pins[i].pin_number;
-          report_message[2] = (byte)i;
-          report_message[3] = highByte(value);  // get high order byte
-          report_message[4] = lowByte(value);
-          pTxCharacteristic->setValue(report_message, 5);
-          pTxCharacteristic->notify();
-          vTaskDelay(1 / portTICK_PERIOD_MS);
+          differential = abs(value - the_touch_pins[i].last_value);
+          if (differential >= the_touch_pins[i].differential) {
+            //trigger value achieved, send out the report
+            the_touch_pins[i].last_value = value;
+            // input_message[1] = the_analog_pins[i].pin_number;
+            report_message[2] = (byte)i;
+            report_message[3] = highByte(value);  // get high order byte
+            report_message[4] = lowByte(value);
+            pTxCharacteristic->setValue(report_message, 5);
+            pTxCharacteristic->notify();
+            vTaskDelay(1 / portTICK_PERIOD_MS);
+          }
         }
       }
     }
-    vTaskDelay(touch_sampling_interval / portTICK_PERIOD_MS);
   }
 }
-
 
 void reset_data() {
   ESP.restart();
@@ -1295,12 +1275,12 @@ void send_debug_info(byte id, int value) {
 
 // command functions
 void serial_loopback() {
-  //Serial.print("loop data ");
-  //for (int i = 0; i < 3; i++) {
-  //  Serial.print(command_buffer[i]);
-  //  Serial.print(" ");
-  //}
-  //Serial.println();
+  Serial.print("loop data ");
+  for (int i = 0; i < 3; i++) {
+    Serial.print(command_buffer[i]);
+    Serial.print(" ");
+  }
+  Serial.println();
   byte loop_back_buffer[3] = { 2, (byte)SERIAL_LOOP_BACK, command_buffer[0] };
   pTxCharacteristic->setValue(loop_back_buffer, 3);
   pTxCharacteristic->notify();
@@ -1684,7 +1664,7 @@ void run_steppers(void *parameter) {
   long current_position;
   long target_position;
 
-  for (;;) {
+  while (1) {
     if (devices.ok_to_run_motors) {
 
       for (int i = 0; i < devices.steppers_index; i++) {
@@ -1842,18 +1822,17 @@ void setup() {
   Serial.println("Waiting a client connection to notify...");
 
   while (!can_scan) {
-    vTaskDelay(10 / portTICK_PERIOD_MS);
-  }
+    vTaskDelay(10/ portTICK_PERIOD_MS);  }
 
   xTaskCreatePinnedToCore(get_next_command, "get next command", 2048, NULL, 5, NULL, app_cpu);
   xTaskCreatePinnedToCore(send_report, "send report", 2048, NULL, 2, NULL, app_cpu);
   xTaskCreatePinnedToCore(scan_digital_inputs, "scan_digital_inputs", 2048, NULL, 2, NULL, app_cpu);
   xTaskCreatePinnedToCore(scan_analog_inputs, "scan_analog_inputs", 2048, NULL, 2, NULL, app_cpu);
-  xTaskCreatePinnedToCore(scan_touch, "scan_touch", 2048, NULL, 4, NULL, app_cpu);
-  xTaskCreatePinnedToCore(scan_sonars, "scan_sonars", 2048, NULL, 2, NULL, app_cpu);
- /xTaskCreatePinnedToCore(scan_dhts, "scan_dhts", 2048, NULL, 5, NULL, app_cpu);
-  xTaskCreatePinnedToCore(run_steppers, "run_steppers", 2048, NULL, 2, NULL, app_cpu);
-  vTaskDelay(100 / portTICK_PERIOD_MS);
+  # xTaskCreatePinnedToCore(scan_touch, "scan_touch", 2048, NULL, 4, NULL, app_cpu);
+  # xTaskCreatePinnedToCore(scan_sonars, "scan_sonars", 2048, NULL, 2, NULL, app_cpu);
+  # xTaskCreatePinnedToCore(scan_dhts, "scan_dhts", 2048, NULL, 5, NULL, app_cpu);
+  #  xTaskCreatePinnedToCore(run_steppers, "run_steppers", 2048, NULL, 2, NULL, app_cpu);
+  vTaskDelay(100/ portTICK_PERIOD_MS);
 
 
   vTaskDelete(NULL);
