@@ -1,6 +1,6 @@
 /*
 
-  Copyright (c) 2022 Alan Yorinks All rights reserved.
+  Copyright (c) 2022=2024 Alan Yorinks All rights reserved.
 
   This program is free software; you can redistribute it and/or
   modify it under the terms of the GNU AFFERO GENERAL PUBLIC LICENSE
@@ -31,6 +31,14 @@
 #include <SPI.h>
 #include <OneWire.h>
 #include <AccelStepper.h>
+
+// If your ESP32 device does not support the standard Arduino BUILTIN_LED
+// Comment out this #define to avoid a compilation error
+#define LED_BUILTIN_SUPPORTED 1
+
+// If your ESP32 device does not support a DAC (ESP32-S3)
+// Comment out this #define to avoid a compilation error
+#define DAC_SUPPORTED 1
 
 /* WIFI specific defines */
 const char *ssid = "YOUR_NETWORK_SSID";
@@ -359,7 +367,7 @@ command_descriptor command_table[] =
 // firmware version - update this when bumping the version
 #define FIRMWARE_MAJOR 2
 #define FIRMWARE_MINOR 0
-#define FIRMWARE_BUILD 1
+#define FIRMWARE_BUILD 4
 
 
 // A buffer to hold i2c report data
@@ -479,7 +487,7 @@ OneWire *ow = NULL;
 
 // A class to store device objects
 
-class Devices {
+class the_Devices {
   public:
     AccelStepper *steppers[MAX_NUMBER_OF_STEPPERS];
     uint8_t stepper_run_modes[MAX_NUMBER_OF_STEPPERS];
@@ -525,7 +533,7 @@ class Devices {
 };
 
 // Instantiate the devices class
-Devices devices = Devices();
+the_Devices the_devices = the_Devices();
 
 // allow input scanning and motor running
 bool can_scan = false;
@@ -652,13 +660,16 @@ void dac_write()
 {
   // command_buffer[0] = pin
   // command_buffer[1] = value
-
+#ifdef DAC_SUPPORTED
   dacWrite(command_buffer[0], command_buffer[1]);
+#endif
 }
 
 void dac_disable()
 {
+#ifdef DAC_SUPPORTED
   dacDisable(command_buffer[0]);
+#endif
 }
 
 void modify_reporting()
@@ -885,7 +896,7 @@ void i2c_write()
 void sonar_new()
 {
   // command_buffer[0] = trigger pin,  command_buffer[1] = echo pin
-  devices.add_sonar((uint8_t)command_buffer[0], (uint8_t)command_buffer[1]);
+  the_devices.add_sonar((uint8_t)command_buffer[0], (uint8_t)command_buffer[1]);
 }
 
 /***********************************
@@ -905,13 +916,13 @@ void dht_new()
   // pre-build an error report in case of a read error
   byte report_message[5] = {4, (byte)DHT_REPORT, (byte)DHT_READ_ERROR, (byte)0, (byte)0};
 
-  devices.add_a_dht((uint8_t)command_buffer[0]);
-  d_read = devices.dhts[devices.dht_index].dht_sensor->read();
+  the_devices.add_a_dht((uint8_t)command_buffer[0]);
+  d_read = the_devices.dhts[the_devices.dht_index].dht_sensor->read();
 
   // if read return == zero it means no errors.
   if (d_read == 0)
   {
-    devices.dht_index++;
+    the_devices.dht_index++;
   }
   else
   {
@@ -921,7 +932,7 @@ void dht_new()
     report_message[3] = command_buffer[0]; // pin number
     report_message[4] = d_read;
     client.write(report_message, 5);
-    delete (devices.dhts[devices.dht_index].dht_sensor);
+    delete (the_devices.dhts[the_devices.dht_index].dht_sensor);
   }
 }
 
@@ -1083,7 +1094,7 @@ void set_pin_mode_stepper() {
   // pin4 = command_buffer[5]
   // enable = command_buffer[6]
 
-  devices.add_a_stepper(command_buffer[1], command_buffer[2],
+  the_devices.add_a_stepper(command_buffer[1], command_buffer[2],
                         command_buffer[3], command_buffer[4],
                         command_buffer[5], command_buffer[6]);
 }
@@ -1105,7 +1116,7 @@ void stepper_move_to() {
   if (command_buffer[5]) {
     position *= -1;
   }
-  devices.steppers[command_buffer[0]]->moveTo(position);
+  the_devices.steppers[command_buffer[0]]->moveTo(position);
 }
 
 void stepper_move() {
@@ -1125,18 +1136,18 @@ void stepper_move() {
   if (command_buffer[5]) {
     position *= -1;
   }
-  devices.steppers[command_buffer[0]]->move(position);
+  the_devices.steppers[command_buffer[0]]->move(position);
 }
 
 void stepper_run() {
-  devices.stepper_run_modes[command_buffer[0]] = STEPPER_RUN;
-  devices.ok_to_run_motors = true;
+  the_devices.stepper_run_modes[command_buffer[0]] = STEPPER_RUN;
+  the_devices.ok_to_run_motors = true;
 }
 
 void stepper_run_speed() {
   // motor_id = command_buffer[0]
-  devices.stepper_run_modes[command_buffer[0]] = STEPPER_RUN_SPEED;
-  devices.ok_to_run_motors = true;
+  the_devices.stepper_run_modes[command_buffer[0]] = STEPPER_RUN_SPEED;
+  the_devices.ok_to_run_motors = true;
 }
 
 void stepper_set_max_speed() {
@@ -1145,7 +1156,7 @@ void stepper_set_max_speed() {
   // speed_lsb = command_buffer[2]
 
   float max_speed = (float) ((command_buffer[1] << 8) + command_buffer[2]);
-  devices.steppers[command_buffer[0]]->setMaxSpeed(max_speed);
+  the_devices.steppers[command_buffer[0]]->setMaxSpeed(max_speed);
 }
 
 void stepper_set_acceleration() {
@@ -1154,7 +1165,7 @@ void stepper_set_acceleration() {
   // accel = command_buffer[2]
 
   float acceleration = (float) ((command_buffer[1] << 8) + command_buffer[2]);
-  devices.steppers[command_buffer[0]]->setAcceleration(acceleration);
+  the_devices.steppers[command_buffer[0]]->setAcceleration(acceleration);
 }
 
 void stepper_set_speed() {
@@ -1163,7 +1174,7 @@ void stepper_set_speed() {
   // speed_msb = command_buffer[1]
   // speed_lsb = command_buffer[2]
   float speed = (float) ((command_buffer[1] << 8) + command_buffer[2]);
-  devices.steppers[command_buffer[0]]->setSpeed(speed);
+  the_devices.steppers[command_buffer[0]]->setSpeed(speed);
 }
 
 void stepper_get_distance_to_go() {
@@ -1175,7 +1186,7 @@ void stepper_get_distance_to_go() {
 
   byte report_message[7] = {6, STEPPER_DISTANCE_TO_GO, command_buffer[0]};
 
-  long dtg = devices.steppers[command_buffer[0]]->distanceToGo();
+  long dtg = the_devices.steppers[command_buffer[0]]->distanceToGo();
 
 
   report_message[3] = (byte) ((dtg & 0xFF000000) >> 24);
@@ -1196,7 +1207,7 @@ void stepper_get_target_position() {
 
   byte report_message[7] = {6, STEPPER_TARGET_POSITION, command_buffer[0]};
 
-  long target = devices.steppers[command_buffer[0]]->targetPosition();
+  long target = the_devices.steppers[command_buffer[0]]->targetPosition();
 
 
   report_message[3] = (byte) ((target & 0xFF000000) >> 24);
@@ -1217,7 +1228,7 @@ void stepper_get_current_position() {
 
   byte report_message[7] = {6, STEPPER_CURRENT_POSITION, command_buffer[0]};
 
-  long position = devices.steppers[command_buffer[0]]->currentPosition();
+  long position = the_devices.steppers[command_buffer[0]]->currentPosition();
 
 
   report_message[3] = (byte) ((position & 0xFF000000) >> 24);
@@ -1242,45 +1253,45 @@ void stepper_set_current_position() {
   position += command_buffer[3] << 8;
   position += command_buffer[4] ;
 
-  devices.steppers[command_buffer[0]]->setCurrentPosition(position);
+  the_devices.steppers[command_buffer[0]]->setCurrentPosition(position);
 }
 
 void stepper_run_speed_to_position() {
-  devices.stepper_run_modes[command_buffer[0]] = STEPPER_RUN_SPEED_TO_POSITION;
-  devices.ok_to_run_motors = true;
+  the_devices.stepper_run_modes[command_buffer[0]] = STEPPER_RUN_SPEED_TO_POSITION;
+  the_devices.ok_to_run_motors = true;
 
 }
 
 void stepper_stop() {
-  devices.steppers[command_buffer[0]]->stop();
-  devices.steppers[command_buffer[0]]->disableOutputs();
-  devices.stepper_run_modes[command_buffer[0]] = STEPPER_STOP;
+  the_devices.steppers[command_buffer[0]]->stop();
+  the_devices.steppers[command_buffer[0]]->disableOutputs();
+  the_devices.stepper_run_modes[command_buffer[0]] = STEPPER_STOP;
 
 
 }
 
 void stepper_disable_outputs() {
-  devices.steppers[command_buffer[0]]->disableOutputs();
+  the_devices.steppers[command_buffer[0]]->disableOutputs();
 }
 
 void stepper_enable_outputs() {
-  devices.steppers[command_buffer[0]]->enableOutputs();
+  the_devices.steppers[command_buffer[0]]->enableOutputs();
 }
 // mark
 void stepper_set_minimum_pulse_width() {
   unsigned int pulse_width = (command_buffer[1] << 8) + command_buffer[2];
-  devices.steppers[command_buffer[0]]->setMinPulseWidth(pulse_width);
+  the_devices.steppers[command_buffer[0]]->setMinPulseWidth(pulse_width);
 }
 
 void stepper_set_enable_pin() {
-  devices.steppers[command_buffer[0]]->setEnablePin((uint8_t) command_buffer[1]);
+  the_devices.steppers[command_buffer[0]]->setEnablePin((uint8_t) command_buffer[1]);
 }
 
 void stepper_set_3_pins_inverted() {
   // command_buffer[1] = directionInvert
   // command_buffer[2] = stepInvert
   // command_buffer[3] = enableInvert
-  devices.steppers[command_buffer[0]]->setPinsInverted((bool) command_buffer[1],
+  the_devices.steppers[command_buffer[0]]->setPinsInverted((bool) command_buffer[1],
       (bool) command_buffer[2],
       (bool) command_buffer[3]);
 }
@@ -1291,7 +1302,7 @@ void stepper_set_4_pins_inverted() {
   // command_buffer[3] = pin3
   // command_buffer[4] = pin4
   // command_buffer[5] = enable
-  devices.steppers[command_buffer[0]]->setPinsInverted((bool) command_buffer[1],
+  the_devices.steppers[command_buffer[0]]->setPinsInverted((bool) command_buffer[1],
       (bool) command_buffer[2],
       (bool) command_buffer[3],
       (bool) command_buffer[4],
@@ -1306,7 +1317,7 @@ void stepper_is_running() {
 
   byte report_message[3] = {2, STEPPER_RUNNING_REPORT, command_buffer[0]};
 
-  report_message[2]  = devices.steppers[command_buffer[0]]->isRunning();
+  report_message[2]  = the_devices.steppers[command_buffer[0]]->isRunning();
 
   client.write(report_message, 3);
 }
@@ -1460,33 +1471,33 @@ void scan_sonars()
 {
   unsigned int distance;
 
-  if (devices.sonars_index)
+  if (the_devices.sonars_index)
   {
     {
       sonar_current_millis = millis();
       if (sonar_current_millis - sonar_previous_millis > sonar_scan_interval)
       {
         sonar_previous_millis = sonar_current_millis;
-        distance = devices.sonars[devices.last_sonar_visited].usonic->read();
-        if (distance != devices.sonars[devices.last_sonar_visited].last_value)
+        distance = the_devices.sonars[the_devices.last_sonar_visited].usonic->read();
+        if (distance != the_devices.sonars[the_devices.last_sonar_visited].last_value)
         {
-          devices.sonars[devices.last_sonar_visited].last_value = distance;
+          the_devices.sonars[the_devices.last_sonar_visited].last_value = distance;
 
           // byte 0 = packet length
           // byte 1 = report type
           // byte 2 = trigger pin number
           // byte 3 = distance high order byte
           // byte 4 = distance low order byte
-          byte report_message[5] = {4, SONAR_DISTANCE, devices.sonars[devices.last_sonar_visited]
+          byte report_message[5] = {4, SONAR_DISTANCE, the_devices.sonars[the_devices.last_sonar_visited]
                                     .trigger_pin,
                                     (byte)(distance >> 8), (byte)(distance & 0xff)
                                    };
           client.write(report_message, 5);
         }
-        devices.last_sonar_visited++;
-        if (devices.last_sonar_visited == devices.sonars_index)
+        the_devices.last_sonar_visited++;
+        if (the_devices.last_sonar_visited == the_devices.sonars_index)
         {
-          devices.last_sonar_visited = 0;
+          the_devices.last_sonar_visited = 0;
         }
       }
     }
@@ -1520,7 +1531,7 @@ void scan_dhts()
   float dht_data;
 
   // are there any dhts to read?
-  if (devices.dht_index)
+  if (the_devices.dht_index)
   {
     // is it time to do the read? This should occur every 2 seconds
     dht_current_millis = millis();
@@ -1530,20 +1541,20 @@ void scan_dhts()
       dht_previous_millis = dht_current_millis;
 
       // read and report all the dht sensors
-      for (int i = 0; i < devices.dht_index; i++)
+      for (int i = 0; i < the_devices.dht_index; i++)
       {
-        report_message[3] = devices.dhts[i].pin;
+        report_message[3] = the_devices.dhts[i].pin;
         // get humidity
-        dht_data = devices.dhts[i].dht_sensor->getHumidity();
+        dht_data = the_devices.dhts[i].dht_sensor->getHumidity();
         memcpy(&report_message[4], &dht_data, sizeof dht_data);
 
         // get temperature
-        dht_data = devices.dhts[i].dht_sensor->getTemperature();
+        dht_data = the_devices.dhts[i].dht_sensor->getTemperature();
         memcpy(&report_message[8], &dht_data, sizeof dht_data);
         client.write(report_message, 12);
 
         // now read do a read for this device for next go around
-        d_read = devices.dhts[i].dht_sensor->read();
+        d_read = the_devices.dhts[i].dht_sensor->read();
 
         if (d_read)
         {
@@ -1552,7 +1563,7 @@ void scan_dhts()
           report_message[0] = 4;
           report_message[1] = DHT_REPORT;
           report_message[2] = DHT_READ_ERROR;
-          report_message[3] = devices.dhts[i].pin; // pin number
+          report_message[3] = the_devices.dhts[i].pin; // pin number
           report_message[4] = d_read;
           client.write(report_message, 5);
         }
@@ -1645,34 +1656,34 @@ void run_steppers() {
   long current_position ;
   long target_position;
 
-  if (devices.ok_to_run_motors) {
+  if (the_devices.ok_to_run_motors) {
 
-    for ( int i = 0; i < devices.steppers_index; i++) {
-      if (devices.stepper_run_modes[i] == STEPPER_STOP) {
+    for ( int i = 0; i < the_devices.steppers_index; i++) {
+      if (the_devices.stepper_run_modes[i] == STEPPER_STOP) {
         continue;
       }
       else {
-        devices.steppers[i]->enableOutputs();
-        switch (devices.stepper_run_modes[i]) {
+        the_devices.steppers[i]->enableOutputs();
+        switch (the_devices.stepper_run_modes[i]) {
           case STEPPER_RUN:
-            devices.steppers[i]->run();
-            running = devices.steppers[i]->isRunning();
+            the_devices.steppers[i]->run();
+            running = the_devices.steppers[i]->isRunning();
             if (!running) {
               byte report_message[3] = {2, STEPPER_RUN_COMPLETE_REPORT, (byte)i};
               client.write(report_message, 3);
-              devices.stepper_run_modes[i] = STEPPER_STOP;
+              the_devices.stepper_run_modes[i] = STEPPER_STOP;
             }
             break;
           case STEPPER_RUN_SPEED:
-            devices.steppers[i]->runSpeed();
+            the_devices.steppers[i]->runSpeed();
             break;
           case STEPPER_RUN_SPEED_TO_POSITION:
-            running = devices.steppers[i]->runSpeedToPosition();
-            target_position = devices.steppers[i]->targetPosition();
-            if (target_position == devices.steppers[i]->currentPosition()) {
+            running = the_devices.steppers[i]->runSpeedToPosition();
+            target_position = the_devices.steppers[i]->targetPosition();
+            if (target_position == the_devices.steppers[i]->currentPosition()) {
               byte report_message[3] = {2, STEPPER_RUN_COMPLETE_REPORT, (byte)i};
               client.write(report_message, 3);
-              devices.stepper_run_modes[i] = STEPPER_STOP;
+              the_devices.stepper_run_modes[i] = STEPPER_STOP;
             }
             break;
           default:
@@ -1694,10 +1705,13 @@ void setup()
   WiFi.begin(ssid, password);
   // delay(100);
 
+#ifdef LED_BUILTIN_SUPPORTED
   pinMode(LED_BUILTIN, OUTPUT);
 
   // turn on LED
   digitalWrite(LED_BUILTIN, HIGH);
+
+#endif
 
   Serial.println("\nAllow 15 seconds for connection to complete..");
 
@@ -1716,7 +1730,10 @@ void setup()
   Serial.println(PORT);
   Serial.println();
 
+#ifdef LED_BUILTIN_SUPPORTED
   digitalWrite(LED_BUILTIN, LOW);
+#endif
+
   init_pin_structures();
   can_scan = true;
   wifiServer.begin();
