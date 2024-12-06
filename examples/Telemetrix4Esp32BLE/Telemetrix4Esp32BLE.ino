@@ -176,7 +176,7 @@ extern void send_debug_info(byte id, int value);
 #define SET_PIN_MODE 1
 #define DIGITAL_WRITE 2
 #define ANALOG_WRITE 3
-#define MODIFY_REPORTING 4 // mode(all, analog, or digital), pin, enable or disable
+#define MODIFY_REPORTING 4  // mode(all, analog, or digital), pin, enable or disable
 #define GET_FIRMWARE_VERSION 5
 #define SERVO_ATTACH 6
 #define SERVO_WRITE 7
@@ -235,8 +235,7 @@ extern void send_debug_info(byte id, int value);
 // the command byte itself, and does not include the command
 // byte in its length.
 // The command_func is a pointer the command's function.
-struct command_descriptor
-{
+struct command_descriptor {
   // a pointer to the command processing function
   void (*command_func)(void);
 };
@@ -245,52 +244,51 @@ struct command_descriptor
 
 // Make sure to keep things in the proper order - command
 // defines are indices into this table.
-command_descriptor command_table[] =
-{
-  {&serial_loopback},
-  {&set_pin_mode},
-  {&digital_write},
-  {&analog_write},
-  {&modify_reporting},
-  {&get_firmware_version},
-  {&servo_attach},
-  {&servo_write},
-  {&servo_detach},
-  {&i2c_begin},
-  {&i2c_read},
-  {&i2c_write},
-  {&sonar_new},
-  {&dht_new},
-  {&stop_all_reports},
-  {&set_analog_scanning_interval},
-  {&enable_all_reports},
-  {&analog_out_attach},
-  {&analog_out_detach},
-  {&dac_write},
-  {&reset_data},
-  {&dac_disable},
-  {&init_spi},
-  {&write_blocking_spi},
-  {&read_blocking_spi},
-  {&set_format_spi},
-  {&spi_cs_control},
-  {&onewire_init},
-  {&onewire_reset},
-  {&onewire_select},
-  {&onewire_skip},
-  {&onewire_write},
-  {&onewire_read},
-  {&onewire_reset_search},
-  {&onewire_search},
-  {&onewire_crc8},
-  {&set_pin_mode_stepper},
-  {&stepper_move_to},
-  {&stepper_move},
-  {&stepper_run},
-  {&stepper_run_speed},
-  {&stepper_set_max_speed},
-  {&stepper_set_acceleration},
-  {&stepper_set_speed},
+command_descriptor command_table[] = {
+  { &serial_loopback },
+  { &set_pin_mode },
+  { &digital_write },
+  { &analog_write },
+  { &modify_reporting },
+  { &get_firmware_version },
+  { &servo_attach },
+  { &servo_write },
+  { &servo_detach },
+  { &i2c_begin },
+  { &i2c_read },
+  { &i2c_write },
+  { &sonar_new },
+  { &dht_new },
+  { &stop_all_reports },
+  { &set_analog_scanning_interval },
+  { &enable_all_reports },
+  { &analog_out_attach },
+  { &analog_out_detach },
+  { &dac_write },
+  { &reset_data },
+  { &dac_disable },
+  { &init_spi },
+  { &write_blocking_spi },
+  { &read_blocking_spi },
+  { &set_format_spi },
+  { &spi_cs_control },
+  { &onewire_init },
+  { &onewire_reset },
+  { &onewire_select },
+  { &onewire_skip },
+  { &onewire_write },
+  { &onewire_read },
+  { &onewire_reset_search },
+  { &onewire_search },
+  { &onewire_crc8 },
+  { &set_pin_mode_stepper },
+  { &stepper_move_to },
+  { &stepper_move },
+  { &stepper_run },
+  { &stepper_run_speed },
+  { &stepper_set_max_speed },
+  { &stepper_set_acceleration },
+  { &stepper_set_speed },
   (&stepper_set_current_position),
   (&stepper_run_speed_to_position),
   (&stepper_stop),
@@ -302,7 +300,7 @@ command_descriptor command_table[] =
   (&stepper_set_4_pins_inverted),
   (&stepper_is_running),
   (&stepper_get_current_position),
-  {&stepper_get_distance_to_go},
+  { &stepper_get_distance_to_go },
   (&stepper_get_target_position),
 };
 
@@ -359,8 +357,8 @@ command_descriptor command_table[] =
 #define DHT_READ_ERROR 1
 
 // firmware version - update this when bumping the version
-#define FIRMWARE_MAJOR 2
-#define FIRMWARE_MINOR 1
+#define FIRMWARE_MAJOR 3
+#define FIRMWARE_MINOR 0
 #define FIRMWARE_BUILD 0
 
 
@@ -374,25 +372,23 @@ byte spi_report_message[64];
 bool stop_reports = false;
 
 // a descriptor for digital pins
-struct pin_descriptor
-{
+struct pin_descriptor {
   byte pin_number;
   byte pin_mode;
-  bool reporting_enabled; // If true, then send reports if an input pin
-  int last_value;         // Last value read for input mode
+  bool reporting_enabled;  // If true, then send reports if an input pin
+  int last_value;          // Last value read for input mode
 };
 
 // an array of digital_pin_descriptors
 pin_descriptor the_digital_pins[MAX_PINS_SUPPORTED];
 
 // a descriptor for digital pins
-struct analog_pin_descriptor
-{
+struct analog_pin_descriptor {
   byte pin_number;
   byte pin_mode;
-  bool reporting_enabled; // If true, then send reports if an input pin
-  int last_value;         // Last value read for input mode
-  int differential;       // difference between current and last value needed
+  bool reporting_enabled;  // If true, then send reports if an input pin
+  int last_value;          // Last value read for input mode
+  int differential;        // difference between current and last value needed
   // to generate a report
 };
 
@@ -404,8 +400,7 @@ uint8_t analog_sampling_interval = 19;
 // an array of analog_pin_descriptors
 analog_pin_descriptor the_analog_pins[MAX_PINS_SUPPORTED];
 
-struct touch_pin_descriptor
-{
+struct touch_pin_descriptor {
   byte pin_number;
   bool reporting_enabled;
   int last_value;
@@ -416,8 +411,8 @@ struct touch_pin_descriptor
 touch_pin_descriptor the_touch_pins[MAX_PINS_SUPPORTED];
 
 // touch pin scanning time management
-unsigned long touch_current_millis;  // for touch input loop
-unsigned long touch_previous_millis; // for touch input loop
+unsigned long touch_current_millis;   // for touch input loop
+unsigned long touch_previous_millis;  // for touch input loop
 uint8_t touch_sampling_interval = 19;
 
 // servo management
@@ -430,35 +425,33 @@ byte pin_to_servo_index_map[MAX_SERVOS];
 // HC-SR04 Sonar Management
 #define MAX_SONARS 6
 
-struct Sonar
-{
+struct Sonar {
   uint8_t trigger_pin;
   unsigned int last_value;
   Ultrasonic *usonic;
 };
 
 // sonar scanning time management
-unsigned long sonar_current_millis;  // for analog input loop
-unsigned long sonar_previous_millis; // for analog input loop
-uint8_t sonar_scan_interval = 33;    // Milliseconds between sensor pings
+unsigned long sonar_current_millis;   // for analog input loop
+unsigned long sonar_previous_millis;  // for analog input loop
+uint8_t sonar_scan_interval = 33;     // Milliseconds between sensor pings
 // (29ms is about the min to avoid = 19;
 
 // DHT Management
-#define MAX_DHTS 6                // max number of devices
-#define READ_FAILED_IN_SCANNER 0  // read request failed when scanning
-#define READ_IN_FAILED_IN_SETUP 1 // read request failed when initially setting up
+#define MAX_DHTS 6                 // max number of devices
+#define READ_FAILED_IN_SCANNER 0   // read request failed when scanning
+#define READ_IN_FAILED_IN_SETUP 1  // read request failed when initially setting up
 
-struct DHT
-{
+struct DHT {
   uint8_t pin;
   unsigned int last_value;
   DHTNEW *dht_sensor;
 };
 
 // dht scanning time management
-unsigned long dht_current_millis;      // for analog input loop
-unsigned long dht_previous_millis;     // for analog input loop
-unsigned int dht_scan_interval = 2200; // scan dht's every 2.2 seconds
+unsigned long dht_current_millis;       // for analog input loop
+unsigned long dht_previous_millis;      // for analog input loop
+unsigned int dht_scan_interval = 2200;  // scan dht's every 2.2 seconds
 
 // buffer to hold incoming command data
 
@@ -475,50 +468,50 @@ OneWire *ow = NULL;
 // A class to store device objects
 
 class the_Devices {
-  public:
-    // stepper device storage and management
-    AccelStepper *steppers[MAX_NUMBER_OF_STEPPERS];
-    uint8_t stepper_run_modes[MAX_NUMBER_OF_STEPPERS];
-    bool ok_to_run_motors = false;
+public:
+  // stepper device storage and management
+  AccelStepper *steppers[MAX_NUMBER_OF_STEPPERS];
+  uint8_t stepper_run_modes[MAX_NUMBER_OF_STEPPERS];
+  bool ok_to_run_motors = false;
 
-    // DHT device storage
-    DHT dhts[MAX_DHTS];
+  // DHT device storage
+  DHT dhts[MAX_DHTS];
 
-    // sonar device storage
-    Sonar sonars[MAX_SONARS];
+  // sonar device storage
+  Sonar sonars[MAX_SONARS];
 
-    // stepper variables
-    int steppers_index = 0;
+  // stepper variables
+  int steppers_index = 0;
 
-    // dht variables
-    byte dht_index = 0; // index into dht struct
+  // dht variables
+  byte dht_index = 0;  // index into dht struct
 
-    // sonar variables
-    byte sonars_index = 0; // index into sonars struct
-    byte last_sonar_visited = 0;
+  // sonar variables
+  byte sonars_index = 0;  // index into sonars struct
+  byte last_sonar_visited = 0;
 
-    // methods to devices
-    void add_a_stepper(int interface, uint8_t pin1, uint8_t pin2,
-                       uint8_t pin3, uint8_t pin4, bool enable) {
+  // methods to devices
+  void add_a_stepper(int interface, uint8_t pin1, uint8_t pin2,
+                     uint8_t pin3, uint8_t pin4, bool enable) {
 
 
-      if (this->steppers_index < MAX_NUMBER_OF_STEPPERS) {
-        this->steppers[this->steppers_index] = new AccelStepper(interface,
-            pin1, pin2, pin3, pin4, enable);
-        this->steppers_index++;
-      }
+    if (this->steppers_index < MAX_NUMBER_OF_STEPPERS) {
+      this->steppers[this->steppers_index] = new AccelStepper(interface,
+                                                              pin1, pin2, pin3, pin4, enable);
+      this->steppers_index++;
     }
+  }
 
-    void add_a_dht(uint8_t pin) {
-      this->dhts[this->dht_index].dht_sensor = new DHTNEW(pin);
-      this->dhts[this->dht_index].pin = pin;
-    }
+  void add_a_dht(uint8_t pin) {
+    this->dhts[this->dht_index].dht_sensor = new DHTNEW(pin);
+    this->dhts[this->dht_index].pin = pin;
+  }
 
-    void add_sonar(uint8_t trigger_pin, uint8_t echo_pin) {
-      this->sonars[this->sonars_index].usonic = new Ultrasonic(trigger_pin, echo_pin, 80000UL);
-      this->sonars[this->sonars_index].trigger_pin = trigger_pin;
-      this->sonars_index++;
-    }
+  void add_sonar(uint8_t trigger_pin, uint8_t echo_pin) {
+    this->sonars[this->sonars_index].usonic = new Ultrasonic(trigger_pin, echo_pin, 80000UL);
+    this->sonars[this->sonars_index].trigger_pin = trigger_pin;
+    this->sonars_index++;
+  }
 };
 
 // Instantiate the devices class
@@ -529,81 +522,72 @@ bool can_scan = false;
 
 /*********  BLE SPECIFICS ********************/
 BLEServer *pServer = NULL;
-BLECharacteristic * pTxCharacteristic;
+BLECharacteristic *pTxCharacteristic;
 bool deviceConnected = false;
 bool oldDeviceConnected = false;
 
 // See the following for generating UUIDs:
 // https://www.uuidgenerator.net/
 
-#define SERVICE_UUID           "6E400001-B5A3-F393-E0A9-E50E24DCCA9E" // UART service UUID
+#define SERVICE_UUID "6E400001-B5A3-F393-E0A9-E50E24DCCA9E"  // UART service UUID
 #define CHARACTERISTIC_UUID_RX "6E400002-B5A3-F393-E0A9-E50E24DCCA9E"
 #define CHARACTERISTIC_UUID_TX "6E400003-B5A3-F393-E0A9-E50E24DCCA9E"
 
 
-class MyServerCallbacks: public BLEServerCallbacks {
-    void onConnect(BLEServer* pServer) {
-      deviceConnected = true;
+class MyServerCallbacks : public BLEServerCallbacks {
+  void onConnect(BLEServer *pServer) {
+    deviceConnected = true;
 #ifdef LED_BUILTIN
-      digitalWrite(LED_BUILTIN, LOW);
+    digitalWrite(LED_BUILTIN, LOW);
 #endif
-      can_scan = true;
-    };
+    can_scan = true;
+  };
 
-    void onDisconnect(BLEServer* pServer) {
-      deviceConnected = false;
+  void onDisconnect(BLEServer *pServer) {
+    deviceConnected = false;
 #ifdef LED_BUILTIN
-      digitalWrite(LED_BUILTIN, HIGH);
+    digitalWrite(LED_BUILTIN, HIGH);
 #endif
-    }
+  }
 };
 
-class MyCallbacks: public BLECharacteristicCallbacks {
-    void onWrite(BLECharacteristic *pCharacteristic) {
-      command_descriptor command_entry;
-      byte command;
+class MyCallbacks : public BLECharacteristicCallbacks {
+  void onWrite(BLECharacteristic *pCharacteristic) {
+    command_descriptor command_entry;
+    byte command;
 
-      // clear the command buffer
-      memset(command_buffer, 0, sizeof(command_buffer));
+    // clear the command buffer
+    memset(command_buffer, 0, sizeof(command_buffer));
 
-      std::string rxValue = pCharacteristic->getValue();
+    //std::string rxValue = pCharacteristic->getValue();
+    String rxValue = pCharacteristic->getValue();
 
-      uint8_t *buf;
-      buf = (uint8_t *) rxValue.data();
+    // get command id
+    command = rxValue[1];
 
-      // make sure the packet length is valid for this packet
-      if (rxValue.length() != (buf[0] + 1)) {
-        Serial.println("Invalid packet received");
-        return;
-      }
+    // uncomment to see packet length and command id
+    //send_debug_info(rxVal[0], rxVal[1]);
 
-      // get command id
-      command = buf[1];
+    // get function pointer to command
+    command_entry = command_table[command];
 
-      // uncomment to see packet length and command id
-      //send_debug_info(buf[0], buf[1]);
-
-      // get function pointer to command
-      command_entry = command_table[command];
-
-      // copy only the payload to the command buffer
-      // the packet length and command id are removed.
-      for (int i = 0; i < rxValue.length() - 2; i++) {
-        command_buffer[i] = buf[i + 2];
-      }
-      // execute the command
-      command_entry.command_func();
+    // copy only the payload to the command buffer
+    // the packet length and command id are removed.
+    for (int i = 0; i < rxValue.length() - 2; i++) {
+      command_buffer[i] = rxValue[i + 2];
+      Serial.println(command_buffer[i], DEC);
     }
-
+    // execute the command
+    command_entry.command_func();
+  }
 };
 
 // command functions
 
 
 // A method to send debug data across the serial link
-void send_debug_info(byte id, int value)
-{
-  byte debug_buffer[5] = {(byte)4, (byte)DEBUG_PRINT, 0, 0, 0};
+void send_debug_info(byte id, int value) {
+  byte debug_buffer[5] = { (byte)4, (byte)DEBUG_PRINT, 0, 0, 0 };
   debug_buffer[2] = id;
   debug_buffer[3] = highByte(value);
   debug_buffer[4] = lowByte(value);
@@ -612,15 +596,13 @@ void send_debug_info(byte id, int value)
 }
 
 // command functions
-void serial_loopback()
-{
-  byte loop_back_buffer[3] = {2, (byte)SERIAL_LOOP_BACK, command_buffer[0]};
+void serial_loopback() {
+  byte loop_back_buffer[3] = { 2, (byte)SERIAL_LOOP_BACK, command_buffer[0] };
   pTxCharacteristic->setValue(loop_back_buffer, 3);
   pTxCharacteristic->notify();
 }
 
-void set_pin_mode()
-{
+void set_pin_mode() {
   byte pin;
   byte mode;
   byte resolution;
@@ -630,8 +612,7 @@ void set_pin_mode()
   pin = command_buffer[0];
   mode = command_buffer[1];
 
-  switch (mode)
-  {
+  switch (mode) {
     case AT_INPUT:
       the_digital_pins[pin].pin_mode = AT_INPUT;
       the_digital_pins[pin].reporting_enabled = command_buffer[2];
@@ -670,33 +651,29 @@ void set_pin_mode()
 
       memcpy(&frequency, &command_buffer[4], sizeof(double));
       fx = (unsigned int)frequency;
-      ledcSetup(channel, frequency, resolution);
-      ledcAttachPin(pin, channel);
+      ledcAttachChannel(pin, frequency, resolution, channel);
       break;
     default:
       break;
   }
 }
 
-void analog_out_attach()
-{
+void analog_out_attach() {
+  // no longer used with version 3 of Espressif library
   // command_buffer[0] = pin number
   // command_buffer[1] = channel
-  ledcAttachPin(command_buffer[0], command_buffer[1]);
+  // ledcAttachPin(command_buffer[0], command_buffer[1]);
 }
 
-void analog_out_detach()
-{
-  ledcDetachPin(command_buffer[0]);
+void analog_out_detach() {
+  ledcDetach(command_buffer[0]);
 }
 
-void set_analog_scanning_interval()
-{
+void set_analog_scanning_interval() {
   analog_sampling_interval = command_buffer[0];
 }
 
-void digital_write()
-{
+void digital_write() {
   byte pin;
   byte value;
   pin = command_buffer[0];
@@ -704,9 +681,8 @@ void digital_write()
   digitalWrite(pin, value);
 }
 
-void analog_write()
-{
-  // command_buffer[0] = channel
+void analog_write() {
+  // command_buffer[0] = pin
   // command_buffer[1] = value_msb,
   // command_buffer[2] = value_lsb
 
@@ -716,8 +692,7 @@ void analog_write()
   ledcWrite(command_buffer[0], value);
 }
 
-void dac_write()
-{
+void dac_write() {
   // command_buffer[0] = pin
   // command_buffer[1] = value
 
@@ -726,50 +701,41 @@ void dac_write()
 #endif
 }
 
-void dac_disable()
-{
+void dac_disable() {
 #ifdef DAC_SUPPORTED
   dacDisable(command_buffer[0]);
 #endif
 }
 
-void modify_reporting()
-{
+void modify_reporting() {
   int pin = command_buffer[1];
 
-  switch (command_buffer[0])
-  {
+  switch (command_buffer[0]) {
     case REPORTING_DISABLE_ALL:
-      for (int i = 0; i < MAX_PINS_SUPPORTED; i++)
-      {
+      for (int i = 0; i < MAX_PINS_SUPPORTED; i++) {
         the_digital_pins[i].reporting_enabled = false;
       }
-      for (int i = 0; i < MAX_PINS_SUPPORTED; i++)
-      {
+      for (int i = 0; i < MAX_PINS_SUPPORTED; i++) {
         the_analog_pins[i].reporting_enabled = false;
       }
       break;
     case REPORTING_ANALOG_ENABLE:
-      if (the_analog_pins[pin].pin_mode != AT_MODE_NOT_SET)
-      {
+      if (the_analog_pins[pin].pin_mode != AT_MODE_NOT_SET) {
         the_analog_pins[pin].reporting_enabled = true;
       }
       break;
     case REPORTING_ANALOG_DISABLE:
-      if (the_analog_pins[pin].pin_mode != AT_MODE_NOT_SET)
-      {
+      if (the_analog_pins[pin].pin_mode != AT_MODE_NOT_SET) {
         the_analog_pins[pin].reporting_enabled = false;
       }
       break;
     case REPORTING_DIGITAL_ENABLE:
-      if (the_digital_pins[pin].pin_mode != AT_MODE_NOT_SET)
-      {
+      if (the_digital_pins[pin].pin_mode != AT_MODE_NOT_SET) {
         the_digital_pins[pin].reporting_enabled = true;
       }
       break;
     case REPORTING_DIGITAL_DISABLE:
-      if (the_digital_pins[pin].pin_mode != AT_MODE_NOT_SET)
-      {
+      if (the_digital_pins[pin].pin_mode != AT_MODE_NOT_SET) {
         the_digital_pins[pin].reporting_enabled = false;
       }
       break;
@@ -778,11 +744,9 @@ void modify_reporting()
   }
 }
 
-void get_firmware_version()
-{
-  byte report_message[5] = {4, FIRMWARE_REPORT, FIRMWARE_MAJOR, FIRMWARE_MINOR,
-                            FIRMWARE_BUILD
-                           };
+void get_firmware_version() {
+  byte report_message[5] = { 4, FIRMWARE_REPORT, FIRMWARE_MAJOR, FIRMWARE_MINOR,
+                             FIRMWARE_BUILD };
   pTxCharacteristic->setValue(report_message, 5);
   pTxCharacteristic->notify();
 }
@@ -793,13 +757,10 @@ void get_firmware_version()
 
 // Find the first servo that is not attached to a pin
 // This is a helper function not called directly via the API
-int find_servo()
-{
+int find_servo() {
   int index = -1;
-  for (int i = 0; i < MAX_SERVOS; i++)
-  {
-    if (servos[i].attached() == false)
-    {
+  for (int i = 0; i < MAX_SERVOS; i++) {
+    if (servos[i].attached() == false) {
       index = i;
       break;
     }
@@ -807,8 +768,7 @@ int find_servo()
   return index;
 }
 
-void servo_attach()
-{
+void servo_attach() {
 
   byte pin = command_buffer[0];
   int servo_found = -1;
@@ -818,31 +778,25 @@ void servo_attach()
 
   // find the first available open servo
   servo_found = find_servo();
-  if (servo_found != -1)
-  {
+  if (servo_found != -1) {
     pin_to_servo_index_map[servo_found] = pin;
     servos[servo_found].attach(pin, minpulse, maxpulse);
-  }
-  else
-  {
+  } else {
     // no open servos available, send a report back to client
-    byte report_message[2] = {SERVO_UNAVAILABLE, pin};
+    byte report_message[2] = { SERVO_UNAVAILABLE, pin };
     pTxCharacteristic->setValue(report_message, 2);
     pTxCharacteristic->notify();
   }
 }
 
 // set a servo to a given angle
-void servo_write()
-{
+void servo_write() {
   byte pin = command_buffer[0];
   int angle = command_buffer[1];
   servos[0].write(angle);
   // find the servo object for the pin
-  for (int i = 0; i < MAX_SERVOS; i++)
-  {
-    if (pin_to_servo_index_map[i] == pin)
-    {
+  for (int i = 0; i < MAX_SERVOS; i++) {
+    if (pin_to_servo_index_map[i] == pin) {
 
       servos[i].write(angle);
       return;
@@ -851,15 +805,12 @@ void servo_write()
 }
 
 // detach a servo and make it available for future use
-void servo_detach()
-{
+void servo_detach() {
   byte pin = command_buffer[0];
 
   // find the servo object for the pin
-  for (int i = 0; i < MAX_SERVOS; i++)
-  {
-    if (pin_to_servo_index_map[i] == pin)
-    {
+  for (int i = 0; i < MAX_SERVOS; i++) {
+    if (pin_to_servo_index_map[i] == pin) {
 
       pin_to_servo_index_map[i] = -1;
       servos[i].detach();
@@ -871,13 +822,11 @@ void servo_detach()
    i2c functions
  **********************************/
 
-void i2c_begin()
-{
+void i2c_begin() {
   Wire.begin();
 }
 
-void i2c_read()
-{
+void i2c_read() {
   // data in the incoming message:
   // address, [0]
   // register, [1]
@@ -890,22 +839,20 @@ void i2c_read()
 
   Wire.beginTransmission(address);
   Wire.write((byte)the_register);
-  Wire.endTransmission(command_buffer[3]);      // default = true
-  Wire.requestFrom(address, command_buffer[2]); // all bytes are returned in requestFrom
+  Wire.endTransmission(command_buffer[3]);       // default = true
+  Wire.requestFrom(address, command_buffer[2]);  // all bytes are returned in requestFrom
 
   // check to be sure correct number of bytes were returned by slave
-  if (command_buffer[2] < Wire.available())
-  {
-    byte report_message[4] = {3, I2C_TOO_FEW_BYTES_RCVD, 1, address};
+  if (command_buffer[2] < Wire.available()) {
+    byte report_message[4] = { 3, I2C_TOO_FEW_BYTES_RCVD, 1, address };
     pTxCharacteristic->setValue(report_message, 4);
     pTxCharacteristic->notify();
     return;
-  }
-  else if (command_buffer[2] > Wire.available())
-  {
-    byte report_message[4] = {3, I2C_TOO_MANY_BYTES_RCVD, 1, address};
+  } else if (command_buffer[2] > Wire.available()) {
+    byte report_message[4] = { 3, I2C_TOO_MANY_BYTES_RCVD, 1, address };
     pTxCharacteristic->setValue(report_message, 4);
-    pTxCharacteristic->notify();    return;
+    pTxCharacteristic->notify();
+    return;
   }
 
   // packet length
@@ -915,7 +862,7 @@ void i2c_read()
   i2c_report_message[1] = I2C_READ_REPORT;
 
   // number of bytes read
-  i2c_report_message[2] = command_buffer[2]; // number of bytes
+  i2c_report_message[2] = command_buffer[2];  // number of bytes
 
   // device address
   i2c_report_message[3] = address;
@@ -924,21 +871,18 @@ void i2c_read()
   i2c_report_message[4] = the_register;
 
   // append the data that was read
-  for (message_size = 0; message_size < command_buffer[2] && Wire.available(); message_size++)
-  {
+  for (message_size = 0; message_size < command_buffer[2] && Wire.available(); message_size++) {
     i2c_report_message[5 + message_size] = Wire.read();
   }
   // send slave address, register and received bytes
 
-  for (int i = 0; i < message_size + 5; i++)
-  {
+  for (int i = 0; i < message_size + 5; i++) {
     pTxCharacteristic->setValue(i2c_report_message, message_size + 5);
     pTxCharacteristic->notify();
   }
 }
 
-void i2c_write()
-{
+void i2c_write() {
   // command_buffer[0] is the number of bytes to send
   // command_buffer[1] is the device address
   // additional bytes to write= command_buffer[3..];
@@ -946,8 +890,7 @@ void i2c_write()
   Wire.beginTransmission(command_buffer[1]);
 
   // write the data to the device
-  for (int i = 0; i < command_buffer[0]; i++)
-  {
+  for (int i = 0; i < command_buffer[0]; i++) {
     Wire.write(command_buffer[i + 2]);
   }
   Wire.endTransmission();
@@ -958,8 +901,7 @@ void i2c_write()
    HC-SR04 adding a new device
  **********************************/
 
-void sonar_new()
-{
+void sonar_new() {
   // command_buffer[0] = trigger pin,  command_buffer[1] = echo pin
   the_devices.add_sonar((uint8_t)command_buffer[0], (uint8_t)command_buffer[1]);
 }
@@ -968,8 +910,7 @@ void sonar_new()
    DHT adding a new device
  **********************************/
 
-void dht_new()
-{
+void dht_new() {
   int d_read;
   // report consists of:
   // 0 - byte count
@@ -979,22 +920,19 @@ void dht_new()
   // 4 - error value
 
   // pre-build an error report in case of a read error
-  byte report_message[5] = {4, (byte)DHT_REPORT, (byte)DHT_READ_ERROR, (byte)0, (byte)0};
+  byte report_message[5] = { 4, (byte)DHT_REPORT, (byte)DHT_READ_ERROR, (byte)0, (byte)0 };
 
   the_devices.add_a_dht((uint8_t)command_buffer[0]);
   d_read = the_devices.dhts[the_devices.dht_index].dht_sensor->read();
 
   // if read return == zero it means no errors.
-  if (d_read == 0)
-  {
+  if (d_read == 0) {
     the_devices.dht_index++;
-  }
-  else
-  {
+  } else {
     // error found
     // send report and release the dht object
 
-    report_message[3] = command_buffer[0]; // pin number
+    report_message[3] = command_buffer[0];  // pin number
     report_message[4] = d_read;
     pTxCharacteristic->setValue(report_message, 5);
     pTxCharacteristic->notify();
@@ -1023,7 +961,7 @@ void write_blocking_spi() {
   int num_bytes = command_buffer[0];
 
   for (int i = 0; i < num_bytes; i++) {
-    SPI.transfer(command_buffer[1 + i] );
+    SPI.transfer(command_buffer[1 + i]);
   }
 }
 
@@ -1040,17 +978,17 @@ void read_blocking_spi() {
 
   // configure the report message
   // calculate the packet length
-  spi_report_message[0] = command_buffer[0] + 3; // packet length
+  spi_report_message[0] = command_buffer[0] + 3;  // packet length
   spi_report_message[1] = SPI_REPORT;
-  spi_report_message[2] = command_buffer[1]; // register
-  spi_report_message[3] = command_buffer[0]; // number of bytes read
+  spi_report_message[2] = command_buffer[1];  // register
+  spi_report_message[3] = command_buffer[0];  // number of bytes read
 
   // write the register out. OR it with 0x80 to indicate a read
   SPI.transfer(command_buffer[1] | 0x80);
 
   // now read the specified number of bytes and place
   // them in the report buffer
-  for (int i = 0; i < command_buffer[0] ; i++) {
+  for (int i = 0; i < command_buffer[0]; i++) {
     spi_report_message[i + 4] = SPI.transfer(0x00);
   }
   pTxCharacteristic->setValue(spi_report_message, command_buffer[0] + 4);
@@ -1061,7 +999,6 @@ void read_blocking_spi() {
 void set_format_spi() {
 
   SPISettings(command_buffer[0], command_buffer[1], command_buffer[2]);
-
 }
 
 // set the SPI chip select line
@@ -1080,7 +1017,7 @@ void onewire_init() {
 void onewire_reset() {
 
   uint8_t reset_return = ow->reset();
-  uint8_t onewire_report_message[] = {3, ONE_WIRE_REPORT, ONE_WIRE_RESET, reset_return};
+  uint8_t onewire_report_message[] = { 3, ONE_WIRE_REPORT, ONE_WIRE_RESET, reset_return };
 
   pTxCharacteristic->setValue(onewire_report_message, 4);
   pTxCharacteristic->notify();
@@ -1119,7 +1056,7 @@ void onewire_read() {
 
   uint8_t data = ow->read();
 
-  uint8_t onewire_report_message[] = {3, ONE_WIRE_REPORT, ONE_WIRE_READ, data};
+  uint8_t onewire_report_message[] = { 3, ONE_WIRE_REPORT, ONE_WIRE_READ, data };
 
   pTxCharacteristic->setValue(onewire_report_message, 4);
   pTxCharacteristic->notify();
@@ -1133,10 +1070,9 @@ void onewire_reset_search() {
 
 // Send a OneWire search command
 void onewire_search() {
-  uint8_t onewire_report_message[] = {10, ONE_WIRE_REPORT, ONE_WIRE_SEARCH,
-                                      0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
-                                      0xff
-                                     };
+  uint8_t onewire_report_message[] = { 10, ONE_WIRE_REPORT, ONE_WIRE_SEARCH,
+                                       0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+                                       0xff };
 
   ow->search(&onewire_report_message[3]);
 
@@ -1148,7 +1084,7 @@ void onewire_search() {
 void onewire_crc8() {
 
   uint8_t crc = ow->crc8(&command_buffer[1], command_buffer[0]);
-  uint8_t onewire_report_message[] = {3, ONE_WIRE_REPORT, ONE_WIRE_CRC8, crc};
+  uint8_t onewire_report_message[] = { 3, ONE_WIRE_REPORT, ONE_WIRE_CRC8, crc };
   pTxCharacteristic->setValue(onewire_report_message, 4);
   pTxCharacteristic->notify();
 }
@@ -1165,8 +1101,8 @@ void set_pin_mode_stepper() {
   // enable = command_buffer[6]
 
   the_devices.add_a_stepper(command_buffer[1], command_buffer[2],
-                        command_buffer[3], command_buffer[4],
-                        command_buffer[5], command_buffer[6]);
+                            command_buffer[3], command_buffer[4],
+                            command_buffer[5], command_buffer[6]);
 }
 
 void stepper_move_to() {
@@ -1181,7 +1117,7 @@ void stepper_move_to() {
   long position = (long)(command_buffer[1]) << 24;
   position += (long)(command_buffer[2]) << 16;
   position += command_buffer[3] << 8;
-  position += command_buffer[4] ;
+  position += command_buffer[4];
   if (command_buffer[5]) {
     position *= -1;
   }
@@ -1203,7 +1139,7 @@ void stepper_move() {
   long position = (long)(command_buffer[1]) << 24;
   position += (long)(command_buffer[2]) << 16;
   position += command_buffer[3] << 8;
-  position += command_buffer[4] ;
+  position += command_buffer[4];
   if (command_buffer[5]) {
     position *= -1;
   }
@@ -1229,7 +1165,7 @@ void stepper_set_max_speed() {
   // speed_msb = command_buffer[1]
   // speed_lsb = command_buffer[2]
 
-  float max_speed = (float) ((command_buffer[1] << 8) + command_buffer[2]);
+  float max_speed = (float)((command_buffer[1] << 8) + command_buffer[2]);
   the_devices.steppers[command_buffer[0]]->setMaxSpeed(max_speed);
 }
 
@@ -1240,7 +1176,7 @@ void stepper_set_acceleration() {
   // accel_msb = command_buffer[1]
   // accel = command_buffer[2]
 
-  float acceleration = (float) ((command_buffer[1] << 8) + command_buffer[2]);
+  float acceleration = (float)((command_buffer[1] << 8) + command_buffer[2]);
   the_devices.steppers[command_buffer[0]]->setAcceleration(acceleration);
 }
 
@@ -1251,7 +1187,7 @@ void stepper_set_speed() {
   // speed_lsb = command_buffer[2]
   //#if !defined (__AVR_ATmega328P__)
 
-  float speed = (float) ((command_buffer[1] << 8) + command_buffer[2]);
+  float speed = (float)((command_buffer[1] << 8) + command_buffer[2]);
   the_devices.steppers[command_buffer[0]]->setSpeed(speed);
 }
 
@@ -1263,15 +1199,15 @@ void stepper_get_distance_to_go() {
 
 
 
-  byte report_message[7] = {6, STEPPER_DISTANCE_TO_GO, command_buffer[0]};
+  byte report_message[7] = { 6, STEPPER_DISTANCE_TO_GO, command_buffer[0] };
 
   long dtg = the_devices.steppers[command_buffer[0]]->distanceToGo();
 
 
-  report_message[3] = (byte) ((dtg & 0xFF000000) >> 24);
-  report_message[4] = (byte) ((dtg & 0x00FF0000) >> 16);
-  report_message[5] = (byte) ((dtg & 0x0000FF00) >> 8);
-  report_message[6] = (byte) ((dtg & 0x000000FF));
+  report_message[3] = (byte)((dtg & 0xFF000000) >> 24);
+  report_message[4] = (byte)((dtg & 0x00FF0000) >> 16);
+  report_message[5] = (byte)((dtg & 0x0000FF00) >> 8);
+  report_message[6] = (byte)((dtg & 0x000000FF));
 
   // motor_id = command_buffer[0]
   pTxCharacteristic->setValue(report_message, 7);
@@ -1286,15 +1222,15 @@ void stepper_get_target_position() {
 
 
 
-  byte report_message[7] = {6, STEPPER_TARGET_POSITION, command_buffer[0]};
+  byte report_message[7] = { 6, STEPPER_TARGET_POSITION, command_buffer[0] };
 
   long target = the_devices.steppers[command_buffer[0]]->targetPosition();
 
 
-  report_message[3] = (byte) ((target & 0xFF000000) >> 24);
-  report_message[4] = (byte) ((target & 0x00FF0000) >> 16);
-  report_message[5] = (byte) ((target & 0x0000FF00) >> 8);
-  report_message[6] = (byte) ((target & 0x000000FF));
+  report_message[3] = (byte)((target & 0xFF000000) >> 24);
+  report_message[4] = (byte)((target & 0x00FF0000) >> 16);
+  report_message[5] = (byte)((target & 0x0000FF00) >> 8);
+  report_message[6] = (byte)((target & 0x000000FF));
 
   // motor_id = command_buffer[0]
   pTxCharacteristic->setValue(report_message, 7);
@@ -1309,15 +1245,15 @@ void stepper_get_current_position() {
 
 
 
-  byte report_message[7] = {6, STEPPER_CURRENT_POSITION, command_buffer[0]};
+  byte report_message[7] = { 6, STEPPER_CURRENT_POSITION, command_buffer[0] };
 
   long position = the_devices.steppers[command_buffer[0]]->currentPosition();
 
 
-  report_message[3] = (byte) ((position & 0xFF000000) >> 24);
-  report_message[4] = (byte) ((position & 0x00FF0000) >> 16);
-  report_message[5] = (byte) ((position & 0x0000FF00) >> 8);
-  report_message[6] = (byte) ((position & 0x000000FF));
+  report_message[3] = (byte)((position & 0xFF000000) >> 24);
+  report_message[4] = (byte)((position & 0x00FF0000) >> 16);
+  report_message[5] = (byte)((position & 0x0000FF00) >> 8);
+  report_message[6] = (byte)((position & 0x000000FF));
 
   // motor_id = command_buffer[0]
   pTxCharacteristic->setValue(report_message, 7);
@@ -1335,7 +1271,7 @@ void stepper_set_current_position() {
   long position = (long)(command_buffer[2]) << 24;
   position += (long)(command_buffer[2]) << 16;
   position += command_buffer[3] << 8;
-  position += command_buffer[4] ;
+  position += command_buffer[4];
 
   the_devices.steppers[command_buffer[0]]->setCurrentPosition(position);
 }
@@ -1343,15 +1279,12 @@ void stepper_set_current_position() {
 void stepper_run_speed_to_position() {
   the_devices.stepper_run_modes[command_buffer[0]] = STEPPER_RUN_SPEED_TO_POSITION;
   the_devices.ok_to_run_motors = true;
-
 }
 
 void stepper_stop() {
   the_devices.steppers[command_buffer[0]]->stop();
   the_devices.steppers[command_buffer[0]]->disableOutputs();
   the_devices.stepper_run_modes[command_buffer[0]] = STEPPER_STOP;
-
-
 }
 
 void stepper_disable_outputs() {
@@ -1368,16 +1301,16 @@ void stepper_set_minimum_pulse_width() {
 }
 
 void stepper_set_enable_pin() {
-  the_devices.steppers[command_buffer[0]]->setEnablePin((uint8_t) command_buffer[1]);
+  the_devices.steppers[command_buffer[0]]->setEnablePin((uint8_t)command_buffer[1]);
 }
 
 void stepper_set_3_pins_inverted() {
   // command_buffer[1] = directionInvert
   // command_buffer[2] = stepInvert
   // command_buffer[3] = enableInvert
-  the_devices.steppers[command_buffer[0]]->setPinsInverted((bool) command_buffer[1],
-      (bool) command_buffer[2],
-      (bool) command_buffer[3]);
+  the_devices.steppers[command_buffer[0]]->setPinsInverted((bool)command_buffer[1],
+                                                           (bool)command_buffer[2],
+                                                           (bool)command_buffer[3]);
 }
 
 void stepper_set_4_pins_inverted() {
@@ -1386,11 +1319,11 @@ void stepper_set_4_pins_inverted() {
   // command_buffer[3] = pin3
   // command_buffer[4] = pin4
   // command_buffer[5] = enable
-  the_devices.steppers[command_buffer[0]]->setPinsInverted((bool) command_buffer[1],
-      (bool) command_buffer[2],
-      (bool) command_buffer[3],
-      (bool) command_buffer[4],
-      (bool) command_buffer[5]);
+  the_devices.steppers[command_buffer[0]]->setPinsInverted((bool)command_buffer[1],
+                                                           (bool)command_buffer[2],
+                                                           (bool)command_buffer[3],
+                                                           (bool)command_buffer[4],
+                                                           (bool)command_buffer[5]);
 }
 
 void stepper_is_running() {
@@ -1399,30 +1332,27 @@ void stepper_is_running() {
   // report = STEPPER_IS_RUNNING, motor_id, distance(8 bytes)
 
 
-  byte report_message[4] = {23, STEPPER_RUNNING_REPORT, command_buffer[0]};
+  byte report_message[4] = { 23, STEPPER_RUNNING_REPORT, command_buffer[0] };
 
-  report_message[3]  = the_devices.steppers[command_buffer[0]]->isRunning();
+  report_message[3] = the_devices.steppers[command_buffer[0]]->isRunning();
 
   pTxCharacteristic->setValue(report_message, 4);
   pTxCharacteristic->notify();
 }
 
-void stop_all_reports()
-{
+void stop_all_reports() {
   stop_reports = true;
   delay(20);
   //Serial.flush();
 }
 
-void enable_all_reports()
-{
+void enable_all_reports() {
   //Serial.flush();
   stop_reports = false;
   delay(20);
 }
 
-void scan_digital_inputs()
-{
+void scan_digital_inputs() {
   byte value;
 
   // report message
@@ -1431,20 +1361,14 @@ void scan_digital_inputs()
   // byte 1 = report type
   // byte 2 = pin number
   // byte 3 = value
-  byte report_message[4] = {3, DIGITAL_REPORT, 0, 0};
+  byte report_message[4] = { 3, DIGITAL_REPORT, 0, 0 };
 
-  for (int i = 0; i < MAX_PINS_SUPPORTED; i++)
-  {
-    if (the_digital_pins[i].pin_mode == AT_INPUT ||
-        the_digital_pins[i].pin_mode == AT_INPUT_PULLUP ||
-        the_digital_pins[i].pin_mode == AT_INPUT_PULLDOWN)
-    {
-      if (the_digital_pins[i].reporting_enabled)
-      {
+  for (int i = 0; i < MAX_PINS_SUPPORTED; i++) {
+    if (the_digital_pins[i].pin_mode == AT_INPUT || the_digital_pins[i].pin_mode == AT_INPUT_PULLUP || the_digital_pins[i].pin_mode == AT_INPUT_PULLDOWN) {
+      if (the_digital_pins[i].reporting_enabled) {
         // if the value changed since last read
         value = (byte)digitalRead(the_digital_pins[i].pin_number);
-        if (value != the_digital_pins[i].last_value)
-        {
+        if (value != the_digital_pins[i].last_value) {
           the_digital_pins[i].last_value = value;
           report_message[2] = (byte)i;
           report_message[3] = value;
@@ -1456,8 +1380,7 @@ void scan_digital_inputs()
   }
 }
 
-void scan_analog_inputs()
-{
+void scan_analog_inputs() {
   int value;
 
   // report message
@@ -1468,31 +1391,26 @@ void scan_analog_inputs()
   // byte 3 = high order byte of value
   // byte 4 = low order byte of value
 
-  byte report_message[5] = {4, ANALOG_REPORT, 0, 0, 0};
+  byte report_message[5] = { 4, ANALOG_REPORT, 0, 0, 0 };
 
   //uint8_t adjusted_pin_number;
   int differential;
 
   current_millis = millis();
-  if (current_millis - previous_millis > analog_sampling_interval)
-  {
+  if (current_millis - previous_millis > analog_sampling_interval) {
     previous_millis = current_millis;
 
-    for (int i = 0; i < MAX_PINS_SUPPORTED; i++)
-    {
-      if (the_analog_pins[i].pin_mode == AT_ANALOG)
-      {
-        if (the_analog_pins[i].reporting_enabled)
-        {
+    for (int i = 0; i < MAX_PINS_SUPPORTED; i++) {
+      if (the_analog_pins[i].pin_mode == AT_ANALOG) {
+        if (the_analog_pins[i].reporting_enabled) {
           value = analogRead(i);
           differential = abs(value - the_analog_pins[i].last_value);
-          if (differential >= the_analog_pins[i].differential)
-          {
+          if (differential >= the_analog_pins[i].differential) {
             //trigger value achieved, send out the report
             the_analog_pins[i].last_value = value;
             // input_message[1] = the_analog_pins[i].pin_number;
             report_message[2] = (byte)i;
-            report_message[3] = highByte(value); // get high order byte
+            report_message[3] = highByte(value);  // get high order byte
             report_message[4] = lowByte(value);
             pTxCharacteristic->setValue(report_message, 5);
             pTxCharacteristic->notify();
@@ -1504,20 +1422,16 @@ void scan_analog_inputs()
   }
 }
 
-void scan_sonars()
-{
+void scan_sonars() {
   unsigned int distance;
 
-  if (the_devices.sonars_index)
-  {
+  if (the_devices.sonars_index) {
     {
       sonar_current_millis = millis();
-      if (sonar_current_millis - sonar_previous_millis > sonar_scan_interval)
-      {
+      if (sonar_current_millis - sonar_previous_millis > sonar_scan_interval) {
         sonar_previous_millis = sonar_current_millis;
         distance = the_devices.sonars[the_devices.last_sonar_visited].usonic->read();
-        if (distance != the_devices.sonars[the_devices.last_sonar_visited].last_value)
-        {
+        if (distance != the_devices.sonars[the_devices.last_sonar_visited].last_value) {
           the_devices.sonars[the_devices.last_sonar_visited].last_value = distance;
 
           // byte 0 = packet length
@@ -1525,16 +1439,13 @@ void scan_sonars()
           // byte 2 = trigger pin number
           // byte 3 = distance high order byte
           // byte 4 = distance low order byte
-          byte report_message[5] = {4, SONAR_DISTANCE, the_devices.sonars[the_devices.last_sonar_visited]
-                                    .trigger_pin,
-                                    (byte)(distance >> 8), (byte)(distance & 0xff)
-                                   };
+          byte report_message[5] = { 4, SONAR_DISTANCE, the_devices.sonars[the_devices.last_sonar_visited].trigger_pin,
+                                     (byte)(distance >> 8), (byte)(distance & 0xff) };
           pTxCharacteristic->setValue(report_message, 5);
           pTxCharacteristic->notify();
         }
         the_devices.last_sonar_visited++;
-        if (the_devices.last_sonar_visited == the_devices.sonars_index)
-        {
+        if (the_devices.last_sonar_visited == the_devices.sonars_index) {
           the_devices.last_sonar_visited = 0;
         }
       }
@@ -1542,8 +1453,7 @@ void scan_sonars()
   }
 }
 
-void scan_dhts()
-{
+void scan_dhts() {
   // prebuild report for valid data
   // reuse the report if a read command fails
 
@@ -1562,25 +1472,22 @@ void scan_dhts()
   // byte 9 = temperature byte 2
   // byte 10 = temperature byte 3
   // byte 11 = temperature byte 4
-  byte report_message[12] = {11, DHT_REPORT, DHT_DATA, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+  byte report_message[12] = { 11, DHT_REPORT, DHT_DATA, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
 
   byte d_read;
 
   float dht_data;
 
   // are there any dhts to read?
-  if (the_devices.dht_index)
-  {
+  if (the_devices.dht_index) {
     // is it time to do the read? This should occur every 2 seconds
     dht_current_millis = millis();
-    if (dht_current_millis - dht_previous_millis > dht_scan_interval)
-    {
+    if (dht_current_millis - dht_previous_millis > dht_scan_interval) {
       // update for the next scan
       dht_previous_millis = dht_current_millis;
 
       // read and report all the dht sensors
-      for (int i = 0; i < the_devices.dht_index; i++)
-      {
+      for (int i = 0; i < the_devices.dht_index; i++) {
         report_message[3] = the_devices.dhts[i].pin;
         // get humidity
         dht_data = the_devices.dhts[i].dht_sensor->getHumidity();
@@ -1595,14 +1502,13 @@ void scan_dhts()
         // now read do a read for this device for next go around
         d_read = the_devices.dhts[i].dht_sensor->read();
 
-        if (d_read)
-        {
+        if (d_read) {
           // error found
           // send report
           report_message[0] = 4;
           report_message[1] = DHT_REPORT;
           report_message[2] = DHT_READ_ERROR;
-          report_message[3] = the_devices.dhts[i].pin; // pin number
+          report_message[3] = the_devices.dhts[i].pin;  // pin number
           report_message[4] = d_read;
           pTxCharacteristic->setValue(report_message, 5);
           pTxCharacteristic->notify();
@@ -1612,8 +1518,7 @@ void scan_dhts()
   }
 }
 
-void scan_touch()
-{
+void scan_touch() {
   int value;
 
   // report message
@@ -1624,30 +1529,26 @@ void scan_touch()
   // byte 3 = high order byte of value
   // byte 4 = low order byte of value
 
-  byte report_message[5] = {4, TOUCH_REPORT, 0, 0, 0};
+  byte report_message[5] = { 4, TOUCH_REPORT, 0, 0, 0 };
 
   int differential;
 
   touch_current_millis = millis();
-  if (touch_current_millis - touch_previous_millis > touch_sampling_interval)
-  {
+  if (touch_current_millis - touch_previous_millis > touch_sampling_interval) {
     touch_previous_millis = touch_current_millis;
 
-    for (int i = 0; i < MAX_PINS_SUPPORTED; i++)
-    {
+    for (int i = 0; i < MAX_PINS_SUPPORTED; i++) {
 
-      if (the_touch_pins[i].reporting_enabled)
-      {
+      if (the_touch_pins[i].reporting_enabled) {
         value = touchRead(i);
 
         differential = abs(value - the_touch_pins[i].last_value);
-        if (differential >= the_touch_pins[i].differential)
-        {
+        if (differential >= the_touch_pins[i].differential) {
           //trigger value achieved, send out the report
           the_touch_pins[i].last_value = value;
           // input_message[1] = the_analog_pins[i].pin_number;
           report_message[2] = (byte)i;
-          report_message[3] = highByte(value); // get high order byte
+          report_message[3] = highByte(value);  // get high order byte
           report_message[4] = lowByte(value);
           pTxCharacteristic->setValue(report_message, 5);
           pTxCharacteristic->notify();
@@ -1663,8 +1564,7 @@ void reset_data() {
 }
 
 void init_pin_structures() {
-  for (byte i = 0; i < MAX_PINS_SUPPORTED; i++)
-  {
+  for (byte i = 0; i < MAX_PINS_SUPPORTED; i++) {
     the_digital_pins[i].pin_number = i;
     the_digital_pins[i].pin_mode = AT_MODE_NOT_SET;
     the_digital_pins[i].reporting_enabled = false;
@@ -1682,8 +1582,7 @@ void init_pin_structures() {
   }
 
   // establish the analog pin array
-  for (byte i = 0; i < MAX_PINS_SUPPORTED; i++)
-  {
+  for (byte i = 0; i < MAX_PINS_SUPPORTED; i++) {
     the_analog_pins[i].pin_number = i;
     the_analog_pins[i].pin_mode = AT_MODE_NOT_SET;
     the_analog_pins[i].reporting_enabled = false;
@@ -1694,23 +1593,22 @@ void init_pin_structures() {
 
 void run_steppers() {
   boolean running;
-  long current_position ;
+  long current_position;
   long target_position;
 
   if (the_devices.ok_to_run_motors) {
 
-    for ( int i = 0; i < the_devices.steppers_index; i++) {
+    for (int i = 0; i < the_devices.steppers_index; i++) {
       if (the_devices.stepper_run_modes[i] == STEPPER_STOP) {
         continue;
-      }
-      else {
+      } else {
         the_devices.steppers[i]->enableOutputs();
         switch (the_devices.stepper_run_modes[i]) {
           case STEPPER_RUN:
             the_devices.steppers[i]->run();
             running = the_devices.steppers[i]->isRunning();
             if (!running) {
-              byte report_message[3] = {2, STEPPER_RUN_COMPLETE_REPORT, (byte)i};
+              byte report_message[3] = { 2, STEPPER_RUN_COMPLETE_REPORT, (byte)i };
               pTxCharacteristic->setValue(report_message, 3);
               pTxCharacteristic->notify();
               the_devices.stepper_run_modes[i] = STEPPER_STOP;
@@ -1723,7 +1621,7 @@ void run_steppers() {
             running = the_devices.steppers[i]->runSpeedToPosition();
             target_position = the_devices.steppers[i]->targetPosition();
             if (target_position == the_devices.steppers[i]->currentPosition()) {
-              byte report_message[3] = {2, STEPPER_RUN_COMPLETE_REPORT, (byte)i};
+              byte report_message[3] = { 2, STEPPER_RUN_COMPLETE_REPORT, (byte)i };
               pTxCharacteristic->setValue(report_message, 3);
               pTxCharacteristic->notify();
               the_devices.stepper_run_modes[i] = STEPPER_STOP;
@@ -1737,8 +1635,7 @@ void run_steppers() {
   }
 }
 
-void setup()
-{
+void setup() {
   // Set WiFi to station mode and disconnect from an AP if it was previously connected
   Serial.begin(115200);
 
@@ -1763,16 +1660,14 @@ void setup()
 
   // Create a BLE Characteristic
   pTxCharacteristic = pService->createCharacteristic(
-                        CHARACTERISTIC_UUID_TX,
-                        BLECharacteristic::PROPERTY_NOTIFY
-                      );
+    CHARACTERISTIC_UUID_TX,
+    BLECharacteristic::PROPERTY_NOTIFY);
 
   pTxCharacteristic->addDescriptor(new BLE2902());
 
-  BLECharacteristic * pRxCharacteristic = pService->createCharacteristic(
-      CHARACTERISTIC_UUID_RX,
-      BLECharacteristic::PROPERTY_WRITE
-                                          );
+  BLECharacteristic *pRxCharacteristic = pService->createCharacteristic(
+    CHARACTERISTIC_UUID_RX,
+    BLECharacteristic::PROPERTY_WRITE);
 
   pRxCharacteristic->setCallbacks(new MyCallbacks());
 
@@ -1784,12 +1679,10 @@ void setup()
   Serial.println("Waiting a client connection to notify...");
 }
 
-void loop()
-{
+void loop() {
 
   if (deviceConnected) {
-    if (!stop_reports)
-    {
+    if (!stop_reports) {
       if (can_scan) {
         scan_digital_inputs();
         scan_analog_inputs();
@@ -1803,8 +1696,8 @@ void loop()
 
   // disconnecting
   if (!deviceConnected && oldDeviceConnected) {
-    delay(500); // give the bluetooth stack the chance to get things ready
-    pServer->startAdvertising(); // restart advertising
+    delay(500);                   // give the bluetooth stack the chance to get things ready
+    pServer->startAdvertising();  // restart advertising
     Serial.println("start advertising");
     oldDeviceConnected = deviceConnected;
   }
