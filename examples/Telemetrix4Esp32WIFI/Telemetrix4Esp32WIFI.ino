@@ -1,6 +1,6 @@
 /*
 
-  Copyright (c) 2022=2024 Alan Yorinks All rights reserved.
+  Copyright (c) 2022=2026 Alan Yorinks All rights reserved.
 
   This program is free software; you can redistribute it and/or
   modify it under the terms of the GNU AFFERO GENERAL PUBLIC LICENSE
@@ -364,7 +364,7 @@ command_descriptor command_table[] = {
 
 // firmware version - update this when bumping the version
 #define FIRMWARE_MAJOR 3
-#define FIRMWARE_MINOR 0
+#define FIRMWARE_MINOR 1
 #define FIRMWARE_BUILD 0
 
 
@@ -815,11 +815,9 @@ void i2c_read() {
   for (message_size = 0; message_size < command_buffer[2] && Wire.available(); message_size++) {
     i2c_report_message[5 + message_size] = Wire.read();
   }
-  // send slave address, register and received bytes
 
-  for (int i = 0; i < message_size + 5; i++) {
+  // send slave address, register and received bytes
     client.write(i2c_report_message, message_size + 5);
-  }
 }
 
 void i2c_write() {
